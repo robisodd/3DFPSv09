@@ -144,9 +144,9 @@ int32_t    fov = 10650;             // Field of view angle (20% of a circle is g
 //#define half_view_h view_h/2
 //----------------------------------//
 
-uint32_t dist[144];                 // Array of distance for each vertical wall segment -- for sprite rendering
 GBitmap *texture[MAX_TEXTURES];
-//uint8_t texture_count;  // probably remove once delete routine works
+GBitmap *sprite_image[1];
+GBitmap *sprite_mask[1];
 
 struct squaretypestruct {
   uint8_t face[4]; // texture[] number
@@ -163,7 +163,7 @@ typedef struct PlayerStruct {
 } PlayerStruct;
 static PlayerStruct player;
 
-static PlayerStruct sprite;
+static PlayerStruct object;
 
 typedef struct RayStruct {
    int32_t x;                 // x coordinate on map the ray hit
@@ -205,6 +205,18 @@ int32_t sign32(int32_t x){return (x > 0) - (x < 0);}
 //  Map Functions
 // ------------------------------------------------------------------------ //
 void LoadMapTextures() {
+  
+/*
+  const int ANIM_IMAGE_RESOURCE_IDS[] = {
+  RESOURCE_ID_FRAME_0,
+  RESOURCE_ID_FRAME_1,
+  RESOURCE_ID_FRAME_2,
+  RESOURCE_ID_FRAME_3,
+  RESOURCE_ID_FRAME_4,
+  RESOURCE_ID_FRAME_5
+};
+*/
+  
   texture[0] = gbitmap_create_with_resource(RESOURCE_ID_STONE);
   texture[1] = gbitmap_create_with_resource(RESOURCE_ID_WALL_FIFTY);
   texture[2] = gbitmap_create_with_resource(RESOURCE_ID_WALL_CIRCLE);
@@ -212,6 +224,9 @@ void LoadMapTextures() {
   texture[4] = gbitmap_create_with_resource(RESOURCE_ID_CEILING_LIGHTS);
   texture[5] = gbitmap_create_with_resource(RESOURCE_ID_WALL_BRICK);
   texture[6] = gbitmap_create_with_resource(RESOURCE_ID_GRASS);
+
+  sprite_image[0] = gbitmap_create_with_resource(RESOURCE_ID_SPRITE_SMILEY);
+  sprite_mask[0] = gbitmap_create_with_resource(RESOURCE_ID_SPRITE_SMILEY_MASK);
 }
 
 void UnLoadMapTextures() {
@@ -463,7 +478,8 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
   int32_t colheight, angle; //colh, z;
   uint32_t x, xaddr, xbit, yaddr;
   uint32_t *target;
-  
+  uint32_t dist[144];                 // Array of distance for each vertical wall segment -- for sprite rendering
+
   uint32_t *ctx32 = ((uint32_t*)(((GBitmap*)ctx)->addr));
   
   // Draw Box around view (not needed if fullscreen)
@@ -487,6 +503,8 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
     dist[col] = ray.dist;                                  // save distance of this column for sprite rendering later
     if(ray.dist > farthest) farthest = ray.dist;           // farthest (furthest?) wall (for sprite rendering. only render sprites closer than farthest wall)
     ray.dist = ray.dist * cos_lookup(angle);               // multiply by cos to stop fisheye lens (should be >>16 to get actual dist, as is done often below)
+//ray.dist <<= 16;    
+
     
       // Calculate amount of shade
       //z =  ray.dist >> 16; //z=(ray.dist*cos_lookup(angle))/TRIG_MAX_RATIO;  // z = distance
@@ -529,6 +547,7 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
   // Draw Sprites!
   // Sort sprites by distance from player
   // draw sprites in order from farthest to closest
+  // start from sprites closer than "farthest wall"
   // sprite:
   // x
   // y
@@ -536,25 +555,103 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
   // distance
   // type
   // d
-  int32_t diffx, diffy, dist;
-  diffx=sprite.x - player.x;
-  diffy=sprite.y - player.y;
-  //diffx = player.x - sprite.x;
-  //diffy = player.y - sprite.y;
-  dist=sqrt32(diffx*diffx + diffy*diffy);
-  Q1=dist;
   //dist = dist * cos_lookup(angle);           // multiply by cos to stop fisheye lens (should be >>16 to get actual dist, as is done often below)
-  int32_t spritesize = ((32*64)) /  dist; // << >> 16
-  Q2 = spritesize;
+
+  
+  //Definitions:
+  //  Object = enemy or whatever
+  //  Sprite = object as displayed on screen
+
+  // for object = 0 to numobjects
+
+  int32_t diffx, diffy, objectdist, spritecol, offset;
+  diffx=object.x - player.x;
+  diffy=object.y - player.y;
+  //objectdist=sqrt32(diffx*diffx + diffy*diffy);
   angle = atan2_lookup(diffy, diffx); // angle between player's x,y and sprite's x,y
-  Q3=angle;
-  //angle=player.facing - angle;          // angle between center column and sprite
+  objectdist = (diffx>diffy) ? (diffx<<16) / cos_lookup(angle) : (diffy<<16) / sin_lookup(angle);
+  
+  // if object distance > furthest wall distance, skip drawing object. next in for object loop
+  
+  //int32_t spritesize = ((32*64)) /  objectdist; // << >> 16
   angle=angle - player.facing;          // angle between center column and sprite
   angle=((angle+TRIG_MAX_ANGLE+32768)%TRIG_MAX_ANGLE)-32768; // convert angle to [-32768 to 32767]
-  Q4=angle;
+  // Should be able to fix the above line by going to signed int16_t variable.
   //angle now is angle from center column. 0=center of view, -fov/2 is left view edge, fov/2 is right view edge
-  int32_t col = (box.size.w/2) + ((box.size.w/2) * (angle) / (fov/2));  // convert angle to on-screen column
-  Q5=col;
+
+  spritecol = (box.size.w/2) + (box.size.w * angle / fov);  // convert angle to view column (0 - box.width) (col = middle line of sprite)
+  // comment out below line and remove it if it still works
+  spritecol = (box.size.w/2) + ((box.size.w/2) * (angle) / (fov/2));  // convert angle to on-screen column (col = middle line of sprite)
+  
+  objectdist = (objectdist * cos_lookup(angle)) >> 16;
+
+  
+  int32_t objectwidth = 32; // 32 pixels wide
+  int32_t objectheight = 32; // 32 pixels tall
+  int32_t objectverticaloffset = -16; // normally center dot is vertically centered, + or - how far to move it.  
+  //int32_t spritescale = 64 /  objectdist; // conversion between object size and size portrayed on screen
+  
+  int32_t spritewidth = (objectwidth*64) /  objectdist;
+  int32_t spriteheight = (objectheight*64) /  objectdist;
+  
+dist[0] = dist[0]+2;
+  
+  int16_t sprite_xmin = spritecol-(spritewidth/2);
+  int16_t sprite_xmax = spritecol+(spritewidth/2);
+  if(sprite_xmax>=0 && sprite_xmin<box.size.w) { // if any of the sprite is horizontally within view
+    //int16_t sprite_ymin = (box.size.h/2) - (((objectheight+objectverticaloffset) * 32) / objectdist);  //(box.size.h/2)-(spriteheight/2); // offset should be double since it's halved
+    //int16_t sprite_ymax = (box.size.h/2) + (((objectheight-objectverticaloffset) * 32) / objectdist);  //(box.size.h/2)+(spriteheight/2);
+    int16_t sprite_ymin = (box.size.h/2) - ((((objectheight/2)+objectverticaloffset) * 64) / objectdist);  //(box.size.h/2)-(spriteheight/2);
+    int16_t sprite_ymax = (box.size.h/2) + ((((objectheight/2)-objectverticaloffset) * 64) / objectdist);  //(box.size.h/2)+(spriteheight/2);
+    if(sprite_ymax>=0 && sprite_ymin<box.size.h) { // if any of the sprite is vertically within view
+      int16_t xmin = sprite_xmin<0 ? 0: sprite_xmin;
+      int16_t xmax = sprite_xmax>box.size.w ? box.size.w : sprite_xmax;
+      int16_t ymin = sprite_ymin<0 ? 0 : sprite_ymin;
+      int16_t ymax = sprite_ymax>box.size.h ? box.size.h : sprite_ymax;
+    
+      //column = (x*32/spritewidth) // (x*32/(spritewidth-1) ?
+      for(int16_t x = xmin; x < xmax; x++) {
+        xaddr = (box.origin.x + x) >> 5;
+         xbit = (box.origin.x + x) & 31;
+      
+offset = (((x - sprite_xmin)*objectwidth) / spritewidth);
+uint32_t* mask = (uint32_t*)sprite_mask[0]->addr; // target = mask
+target = (uint32_t*)sprite_image[0]->addr; // target = sprite
+        
+        
+        for(int16_t y = ymin; y < ymax; y++) {
+          yaddr = (box.origin.y + y) * 5;
+int32_t ch = (objectheight * (y - sprite_ymin)) / spriteheight;
+if(((*(offset + mask) >> ch) & 1) == 1) {
+graphics_context_set_stroke_color(ctx, ((*(target+offset) >> ch)&1));
+graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + y));
+            ctx32[xaddr + yaddr] &= ~(1 << xbit);
+//ctx32[xaddr + yaddr] |=  (1 << xbit);
+ctx32[xaddr + yaddr] |=  (((*(target+offset) >> ch)&1) << xbit);
+}
+        } // end y loop
+      } // end x loop
+    } // end within vertical view
+  } // end within horizontal view
+  // end object loop
+}
+
+/*  
+  
+  graphics_context_set_stroke_color(ctx, 0);
+  for(int16_t col = 0; col < box.size.w; col++) {  // Sprite Overlay Loop
+    if(col>=(spritecol-(spritesize/2)) && col<=(spritecol+(spritesize/2))) {
+
+      int16_t ymin = (box.size.h/2)-(spritesize/2); if(ymin<0) ymin = 0;
+      int16_t ymax = (box.size.h/2)+(spritesize/2); if(ymax>box.size.h) ymax=box.size.h;
+      for(int16_t y = ymin; y < ymax; y++)
+        graphics_draw_pixel(ctx, GPoint(box.origin.x + col, box.origin.y + y));
+    }
+      
+  }
+*/
+      
+/*  
   if((col+(spritesize/2))>=0 && (col-(spritesize/2))<box.size.w) { // if any of the sprite is within view
     int16_t colmin = box.origin.x + ((col<=(spritesize/2)) ? 0 : (col-(spritesize/2)));
     int16_t colmax = box.origin.x + (((col+(spritesize/2))>=box.size.w) ? box.size.w : (col+(spritesize/2)));
@@ -576,6 +673,7 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
     
   }
   //graphics_fill_rect(ctx, GRect(box.origin.x + col-(spritesize/2),box.origin.y + (box.size.h - spritesize)/2,spritesize,spritesize), 0, GCornerNone);
+  */
   
   /*
 int32_t diffx, diffy, dist;
@@ -604,7 +702,6 @@ int32_t diffx, diffy, dist;
    // xbit = x & 31;        // X bit-shift amount (for which bit within screen memory 32bit word)
    // dist[col] = ray.dist;  
    */
-}
 
 static void graphics_layer_update_proc(Layer *me, GContext *ctx) {
   static char text[40];  //Buffer to hold text
@@ -686,7 +783,7 @@ static void init(void) {
   
   srand(time(NULL));  // Seed randomizer so different map every time
   player = (struct PlayerStruct){.x=(64*(mapsize/2)), .y=(-2 * 64), .facing=10000};    // Seems like a good place to start
-  sprite = (struct PlayerStruct){.x=(2 * 64), .y=(64*(mapsize/2)), .facing=10000};    // sprite position
+  object = (struct PlayerStruct){.x=(2 * 64), .y=(64*(mapsize/2)), .facing=10000};    // sprite position
   //GenerateRandomMap();                // generate a randomly dotted map
   //GenerateMazeMap(mapsize/2, 0);    // generate a random maze, enterane on middle of top side
   GenerateSquareMap();
