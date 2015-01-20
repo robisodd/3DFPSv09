@@ -248,7 +248,7 @@ void UnLoadMapTextures() {
 
 void GenerateSquareMap() {
   squaretype[0].ceiling = 255; // outside sky
-  squaretype[0].floor   = 255;//6;   // outside grass
+  squaretype[0].floor   = 6;   // outside grass
 
   squaretype[1].face[0]=squaretype[1].face[1]=squaretype[1].face[2]=squaretype[1].face[3]=5;
   squaretype[1].ceiling = 4;
@@ -258,19 +258,19 @@ void GenerateSquareMap() {
     map[i] = 1;                            // inside floor/ceiling
   
   for (int16_t i=0; i<mapsize; i++) {
-    map[i*mapsize + 0]           = 0;//128+0;  // west wall
-    map[i*mapsize + mapsize - 1] = 0;//128+0;  // east wall
-    map[i]                       = 0;//128+0;  // north wall
-    map[(mapsize-1)*mapsize + i] = 0;//128+0;  // south wall
+    map[i*mapsize + 0]           = 128+0;  // west wall
+    map[i*mapsize + mapsize - 1] = 128+0;  // east wall
+    map[i]                       = 128+0;  // north wall
+    map[(mapsize-1)*mapsize + i] = 128+0;  // south wall
   }
 //   map[((mapsize-1) * mapsize)/2] = 128+1;  // middle block
-  map[((mapsize/2) * mapsize) + (mapsize/2)] = 0;  // middle block
+  map[((mapsize/2) * mapsize) + (mapsize/2)] = 128+1;  // middle block
 
   
-//   player.x = 1 * 64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
-//   object.x = 2 * 64; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
-  player.x = ((64*mapsize)/2)-64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
-  object.x = (64*mapsize)/2; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
+   player.x = 1 * 64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
+   object.x = 2 * 64; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
+//  player.x = ((64*mapsize)/2)-64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
+//  object.x = (64*mapsize)/2; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
   //setmap(object.x, object.y, 0);
 }
 
@@ -353,7 +353,6 @@ void GenerateMazeMap(int32_t startx, int32_t starty) {
 // ------------------------------------------------------------------------ //
 //  General game functions
 // ------------------------------------------------------------------------ //
-
 void walk(int32_t direction, int32_t distance) {
   int32_t dx = (cos_lookup(direction) * distance) >> 16;
   int32_t dy = (sin_lookup(direction) * distance) >> 16;
@@ -509,10 +508,10 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
     
     shoot_ray(player.x, player.y, player.facing + angle);  //Shoot rays out of player's eyes.  pew pew.
     ray.hit &= 127;                                        // If ray hit a block (>127) or not (<128), set ray.hit to valid block type [0-127]
-    dist[col] = ray.dist;                                  // save distance of this column for sprite rendering later
     if(ray.dist > farthest) farthest = ray.dist;           // farthest (furthest?) wall (for sprite rendering. only render sprites closer than farthest wall)
-    ray.dist = ray.dist * cos_lookup(angle);               // multiply by cos to stop fisheye lens (should be >>16 to get actual dist, as is done often below)
-//ray.dist <<= 16;    
+    dist[col] = ray.dist;                                  // save distance of this column for sprite rendering later
+    ray.dist = ray.dist * cos_lookup(angle);               // multiply by cos to stop fisheye lens (should be >>16 to get actual dist, but that's all done below)
+    //ray.dist <<= 16;    
 
     
       // Calculate amount of shade
@@ -525,7 +524,7 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
       colheight = (colheight>box.size.h) ? box.size.h/2 : colheight/2;   // Make sure line isn't drawn beyond bounding box (also halve it cause of 2 32bit textures)
       
       // Texture the Ray hit, point to 1st half of texture (half, cause a 64x64px texture menas there's 2 uint32_t per texture row.  Also why * 2 below)
-      target = (uint32_t*)texture[squaretype[ray.hit].face[ray.face]]->addr + ray.offset * 2;// maybe use GBitmap's size veriables to store texture size?
+      target = (uint32_t*)texture[squaretype[ray.hit].face[ray.face]]->addr + (ray.offset * 2);// maybe use GBitmap's size veriables to store texture size?
     
       yaddr = ((box.origin.y + (box.size.h/2)) * 5);   // Y Address of vertical center = Y screen coordinate * 5
       for(int32_t i=0, yoffset=0; i<colheight; i++, yoffset+=5) {
@@ -649,8 +648,6 @@ ctx32[xaddr + yaddr] |=  (((*(target+offset) >> ch)&1) << xbit);
   //  Sprite = object as displayed on screen
 
   // for object = 0 to numobjects
-dist[0] = dist[0] + 0;
-  
   int32_t diffx, diffy, objectdist, spritecol, offset;
 
   
@@ -675,7 +672,7 @@ dist[0] = dist[0] + 0;
   angle=((angle+TRIG_MAX_ANGLE+32768)%TRIG_MAX_ANGLE)-32768; // repair angle to [-32768 to 32767]
   // Should be able to fix the above line by casting to signed int16_t variable.
   //angle now is angle from center column. 0=center of view, -fov/2 is left view edge, fov/2 is right view edge
-  objectdist = (objectdist * cos_lookup(angle)) >> 16;
+  objectdist = (objectdist * cos_lookup(angle)) >> 16;  // fisheye adjustment.  note: distance negative when behind you.  maybe make objectdist uint32? unless negative helps?
   
   
     
@@ -712,6 +709,7 @@ Q5=spriteheight;
       int32_t ymax = sprite_ymax>box.size.h ? box.size.h : sprite_ymax;
 
       for(int32_t x = xmin; x < xmax; x++) {
+        if(((int32_t)dist[x])>=objectdist) {  /////////////// if not behind wall
       xaddr = (box.origin.x + x) >> 5;
        xbit = (box.origin.x + x) & 31;
 
@@ -729,7 +727,7 @@ Q5=spriteheight;
                //ctx32[xaddr + yaddr] |=  ((time(NULL)%2) << xbit);
                ctx32[xaddr + yaddr] |=  (((*(target+offset) >> ch)&1) << xbit);  // make bit black or white
              }
-           }
+           } // next y
         
         //for(int16_t row=0; row<(box.size.h/2); row++) {
           //uint32_t y;
@@ -745,10 +743,10 @@ Q5=spriteheight;
 //             graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + (box.size.h/2) + row));
           //yaddr = (box.origin.y + y) * 5;
           //graphics_context_set_stroke_color(ctx, ((*(target+offset) >> ch)&1));
-
-        }
-      }
-    }
+          } // end if in front of wall
+        } // next x
+      } // end if within y bounds
+    } // end if within x bounds
   //} // for coladd
 
 
@@ -805,73 +803,6 @@ ctx32[xaddr + yaddr] |=  (((*(target+offset) >> ch)&1) << xbit);
   
   
 } // end draw 3D function
-
-/*  
-  
-  graphics_context_set_stroke_color(ctx, 0);
-  for(int16_t col = 0; col < box.size.w; col++) {  // Sprite Overlay Loop
-    if(col>=(spritecol-(spritesize/2)) && col<=(spritecol+(spritesize/2))) {
-
-      int16_t ymin = (box.size.h/2)-(spritesize/2); if(ymin<0) ymin = 0;
-      int16_t ymax = (box.size.h/2)+(spritesize/2); if(ymax>box.size.h) ymax=box.size.h;
-      for(int16_t y = ymin; y < ymax; y++)
-        graphics_draw_pixel(ctx, GPoint(box.origin.x + col, box.origin.y + y));
-    }
-      
-  }
-*/
-      
-/*  
-  if((col+(spritesize/2))>=0 && (col-(spritesize/2))<box.size.w) { // if any of the sprite is within view
-    int16_t colmin = box.origin.x + ((col<=(spritesize/2)) ? 0 : (col-(spritesize/2)));
-    int16_t colmax = box.origin.x + (((col+(spritesize/2))>=box.size.w) ? box.size.w : (col+(spritesize/2)));
-    int16_t   ymin = box.origin.y + ((box.size.h<=spritesize) ? 0 : ((box.size.h-spritesize)/2));
-    int16_t   ymax = box.origin.y + ((spritesize/2)>=(box.size.h/2) ? box.size.h : ((box.size.h+spritesize)/2));
-    graphics_context_set_stroke_color(ctx, 1);
-    for(int16_t x = colmin; x < colmax; x++)
-      for(int16_t y = ymin; y < ymax; y++)
-        graphics_draw_pixel(ctx, GPoint(x, y));
-    graphics_context_set_stroke_color(ctx, 0);
-    for(int16_t x = colmin; x < colmax; x++) {
-      graphics_draw_pixel(ctx, GPoint(x, ymin));
-      graphics_draw_pixel(ctx, GPoint(x, ymax-1));
-    }
-    for(int16_t y = ymin; y < ymax; y++) {
-        graphics_draw_pixel(ctx, GPoint(colmin, y));
-        graphics_draw_pixel(ctx, GPoint(colmax-1, y));
-    }
-    
-  }
-  //graphics_fill_rect(ctx, GRect(box.origin.x + col-(spritesize/2),box.origin.y + (box.size.h - spritesize)/2,spritesize,spritesize), 0, GCornerNone);
-  */
-  
-  /*
-int32_t diffx, diffy, dist;
-  diffx=sprite.x - player.x;
-  diffy=sprite.y - player.y;
-  dist=sqrt32(diffx*diffx + diffy*diffy);
-  Q1=dist;
-  
-  dist = dist * cos_lookup(angle);           // multiply by cos to stop fisheye lens (should be >>16 to get actual dist, as is done often below)
-  
-  int32_t spritesize = ((32*64) << 16) /  dist;  // 32 pixel width / (dist>>16)
-  if(spritesize>168) spritesize=168;
-  Q2 = spritesize;
-  angle = atan2_lookup(diffy, diffx);
-  Q3=angle;
-  //angle = angle - player.facing;
-  int32_t col = (box.size.w/2) + ((box.size.w/2) * angle / (fov/2));
-  Q4=col;
-  graphics_context_set_stroke_color(ctx, GColorWhite);
-  if(col>0 && col<144)
-    graphics_draw_line(ctx, GPoint(col,(box.size.h/2)-spritesize), GPoint(col,(box.size.h/2)+spritesize));
-  //angle = (fov * (col - (box.size.w>>1))) / box.size.w;
-    
-   // x = col+box.origin.x;  // X screen coordinate
-   // xaddr = x >> 5;        // X memory address (for which 32bit screen memory word)
-   // xbit = x & 31;        // X bit-shift amount (for which bit within screen memory 32bit word)
-   // dist[col] = ray.dist;  
-   */
 
 static void graphics_layer_update_proc(Layer *me, GContext *ctx) {
   static char text[40];  //Buffer to hold text

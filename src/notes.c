@@ -326,3 +326,73 @@ ctx32[xaddr + yaddr] |=  (((*(target+offset) >> ch)&1) << xbit);
   // end object loop
   
 */
+
+
+
+
+/*  
+  
+  graphics_context_set_stroke_color(ctx, 0);
+  for(int16_t col = 0; col < box.size.w; col++) {  // Sprite Overlay Loop
+    if(col>=(spritecol-(spritesize/2)) && col<=(spritecol+(spritesize/2))) {
+
+      int16_t ymin = (box.size.h/2)-(spritesize/2); if(ymin<0) ymin = 0;
+      int16_t ymax = (box.size.h/2)+(spritesize/2); if(ymax>box.size.h) ymax=box.size.h;
+      for(int16_t y = ymin; y < ymax; y++)
+        graphics_draw_pixel(ctx, GPoint(box.origin.x + col, box.origin.y + y));
+    }
+      
+  }
+*/
+      
+/*  
+  if((col+(spritesize/2))>=0 && (col-(spritesize/2))<box.size.w) { // if any of the sprite is within view
+    int16_t colmin = box.origin.x + ((col<=(spritesize/2)) ? 0 : (col-(spritesize/2)));
+    int16_t colmax = box.origin.x + (((col+(spritesize/2))>=box.size.w) ? box.size.w : (col+(spritesize/2)));
+    int16_t   ymin = box.origin.y + ((box.size.h<=spritesize) ? 0 : ((box.size.h-spritesize)/2));
+    int16_t   ymax = box.origin.y + ((spritesize/2)>=(box.size.h/2) ? box.size.h : ((box.size.h+spritesize)/2));
+    graphics_context_set_stroke_color(ctx, 1);
+    for(int16_t x = colmin; x < colmax; x++)
+      for(int16_t y = ymin; y < ymax; y++)
+        graphics_draw_pixel(ctx, GPoint(x, y));
+    graphics_context_set_stroke_color(ctx, 0);
+    for(int16_t x = colmin; x < colmax; x++) {
+      graphics_draw_pixel(ctx, GPoint(x, ymin));
+      graphics_draw_pixel(ctx, GPoint(x, ymax-1));
+    }
+    for(int16_t y = ymin; y < ymax; y++) {
+        graphics_draw_pixel(ctx, GPoint(colmin, y));
+        graphics_draw_pixel(ctx, GPoint(colmax-1, y));
+    }
+    
+  }
+  //graphics_fill_rect(ctx, GRect(box.origin.x + col-(spritesize/2),box.origin.y + (box.size.h - spritesize)/2,spritesize,spritesize), 0, GCornerNone);
+  */
+  
+  /*
+int32_t diffx, diffy, dist;
+  diffx=sprite.x - player.x;
+  diffy=sprite.y - player.y;
+  dist=sqrt32(diffx*diffx + diffy*diffy);
+  Q1=dist;
+  
+  dist = dist * cos_lookup(angle);           // multiply by cos to stop fisheye lens (should be >>16 to get actual dist, as is done often below)
+  
+  int32_t spritesize = ((32*64) << 16) /  dist;  // 32 pixel width / (dist>>16)
+  if(spritesize>168) spritesize=168;
+  Q2 = spritesize;
+  angle = atan2_lookup(diffy, diffx);
+  Q3=angle;
+  //angle = angle - player.facing;
+  int32_t col = (box.size.w/2) + ((box.size.w/2) * angle / (fov/2));
+  Q4=col;
+  graphics_context_set_stroke_color(ctx, GColorWhite);
+  if(col>0 && col<144)
+    graphics_draw_line(ctx, GPoint(col,(box.size.h/2)-spritesize), GPoint(col,(box.size.h/2)+spritesize));
+  //angle = (fov * (col - (box.size.w>>1))) / box.size.w;
+    
+   // x = col+box.origin.x;  // X screen coordinate
+   // xaddr = x >> 5;        // X memory address (for which 32bit screen memory word)
+   // xbit = x & 31;        // X bit-shift amount (for which bit within screen memory 32bit word)
+   // dist[col] = ray.dist;  
+   */
