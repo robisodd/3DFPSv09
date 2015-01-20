@@ -243,3 +243,86 @@ static void graphics_layer_update_proc(Layer *me, GContext *ctx) {
 //  view_h += 2; if(view_h>180) view_h=180; else view_x -= 1;
 //  view_w += 2; if(view_w>150) view_w=150; else view_y -= 1;
 //}
+
+
+
+
+/*
+  //Definitions:
+  //  Object = enemy or whatever
+  //  Sprite = object as displayed on screen
+
+  // for object = 0 to numobjects
+
+  int32_t diffx, diffy, objectdist, spritecol, offset;
+  diffx=object.x - player.x;
+  diffy=object.y - player.y;
+  //objectdist=sqrt32(diffx*diffx + diffy*diffy);
+  angle = atan2_lookup(diffy, diffx); // angle between player's x,y and sprite's x,y
+  objectdist = (diffx>diffy) ? (diffx<<16) / cos_lookup(angle) : (diffy<<16) / sin_lookup(angle);
+  
+  // if object distance > furthest wall distance, skip drawing object. next in for object loop
+  
+  //int32_t spritesize = ((32*64)) /  objectdist; // << >> 16
+  angle=angle - player.facing;          // angle between center column and sprite
+  angle=((angle+TRIG_MAX_ANGLE+32768)%TRIG_MAX_ANGLE)-32768; // convert angle to [-32768 to 32767]
+  // Should be able to fix the above line by going to signed int16_t variable.
+  //angle now is angle from center column. 0=center of view, -fov/2 is left view edge, fov/2 is right view edge
+
+  spritecol = (box.size.w/2) + (box.size.w * angle / fov);  // convert angle to view column (0 - box.width) (col = middle line of sprite)
+  // comment out below line and remove it if it still works
+  spritecol = (box.size.w/2) + ((box.size.w/2) * (angle) / (fov/2));  // convert angle to on-screen column (col = middle line of sprite)
+  
+  objectdist = (objectdist * cos_lookup(angle)) >> 16;
+
+  
+  int32_t objectwidth = 32; // 32 pixels wide
+  int32_t objectheight = 32; // 32 pixels tall
+  int32_t objectverticaloffset = -16; // normally center dot is vertically centered, + or - how far to move it.  
+  //int32_t spritescale = 64 /  objectdist; // conversion between object size and size portrayed on screen
+  
+  int32_t spritewidth = (objectwidth*64) /  objectdist;
+  int32_t spriteheight = (objectheight*64) /  objectdist;
+  
+dist[0] = dist[0]+2;
+  
+  int16_t sprite_xmin = spritecol-(spritewidth/2);
+  int16_t sprite_xmax = spritecol+(spritewidth/2);
+  if(sprite_xmax>=0 && sprite_xmin<box.size.w) { // if any of the sprite is horizontally within view
+    //int16_t sprite_ymin = (box.size.h/2) - (((objectheight+objectverticaloffset) * 32) / objectdist);  //(box.size.h/2)-(spriteheight/2); // offset should be double since it's halved
+    //int16_t sprite_ymax = (box.size.h/2) + (((objectheight-objectverticaloffset) * 32) / objectdist);  //(box.size.h/2)+(spriteheight/2);
+    int16_t sprite_ymin = (box.size.h/2) - ((((objectheight/2)+objectverticaloffset) * 64) / objectdist);  //(box.size.h/2)-(spriteheight/2);
+    int16_t sprite_ymax = (box.size.h/2) + ((((objectheight/2)-objectverticaloffset) * 64) / objectdist);  //(box.size.h/2)+(spriteheight/2);
+    if(sprite_ymax>=0 && sprite_ymin<box.size.h) { // if any of the sprite is vertically within view
+      int16_t xmin = sprite_xmin<0 ? 0: sprite_xmin;
+      int16_t xmax = sprite_xmax>box.size.w ? box.size.w : sprite_xmax;
+      int16_t ymin = sprite_ymin<0 ? 0 : sprite_ymin;
+      int16_t ymax = sprite_ymax>box.size.h ? box.size.h : sprite_ymax;
+    
+      //column = (x*32/spritewidth) // (x*32/(spritewidth-1) ?
+      for(int16_t x = xmin; x < xmax; x++) {
+        xaddr = (box.origin.x + x) >> 5;
+         xbit = (box.origin.x + x) & 31;
+      
+offset = (((x - sprite_xmin)*objectwidth) / spritewidth);
+uint32_t* mask = (uint32_t*)sprite_mask[0]->addr; // target = mask
+target = (uint32_t*)sprite_image[0]->addr; // target = sprite
+        
+        
+        for(int16_t y = ymin; y < ymax; y++) {
+          yaddr = (box.origin.y + y) * 5;
+int32_t ch = (objectheight * (y - sprite_ymin)) / spriteheight;
+if(((*(offset + mask) >> ch) & 1) == 1) {
+graphics_context_set_stroke_color(ctx, ((*(target+offset) >> ch)&1));
+graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + y));
+            ctx32[xaddr + yaddr] &= ~(1 << xbit);
+//ctx32[xaddr + yaddr] |=  (1 << xbit);
+ctx32[xaddr + yaddr] |=  (((*(target+offset) >> ch)&1) << xbit);
+}
+        } // end y loop
+      } // end x loop
+    } // end within vertical view
+  } // end within horizontal view
+  // end object loop
+  
+*/
