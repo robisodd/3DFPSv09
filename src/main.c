@@ -48,6 +48,7 @@
         Changed map to unsigned (uint8 from int8)
         Map squares now point to Square_type array
         Adding sprite support...
+        ray.dist is signed again (to compare with sprite dist which can be negative if behind you)
         
   To Do:
         Texture looping
@@ -269,6 +270,8 @@ void GenerateSquareMap() {
   
    player.x = 1 * 64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
    object.x = 2 * 64; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
+   player.x = 2 * 64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
+   object.x = 1 * 64; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
 //  player.x = ((64*mapsize)/2)-64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
 //  object.x = (64*mapsize)/2; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
   //setmap(object.x, object.y, 0);
@@ -380,43 +383,45 @@ void shoot_ray(int32_t start_x, int32_t start_y, int32_t angle) {
   
     sin = sin_lookup(angle);
     cos = cos_lookup(angle);
-  ray.x = start_x;
-  ray.y = start_y;
+  ray.x = start_x;// + (cos>>11);  // fixes fisheye, but puts you inside walls if you're too close. was ((32*cos)>>16), 32 being dist from player to edge of view plane
+  ray.y = start_y;// + (sin>>11);
      ny = sin>0 ? 64 : -1;
      nx = cos>0 ? 64 : -1;
   
-  do { do {
-    dy = ny - (ray.y & 63);                          // north-south component of distance to next east-west wall
-    dx = nx - (ray.x & 63);                          // east-west component of distance to next north-south wall
-
-    if(abs32(dx * sin) < abs32(dy * cos)) {          // if(distance to north-south wall < distance to east-west wall) See Footnote 1
-      ray.x += dx;
-      ray.y += ((dx * sin) / cos);
-      ray.hit = getmap(ray.x, ray.y);
-      if(ray.hit > 127) {                            // if ray hits a wall (a block)
-        ray.face = cos>0 ? 2 : 0;                      // hit west or east face of block
-        ray.offset = cos>0 ? 64-(ray.y&63) : ray.y&63; // Offset is where on wall ray hits: 0 (left edge) to 63 (right edge)
-        ray.dist = ((ray.x - start_x) << 16) / cos;    // Distance ray traveled.    <<16 = * TRIG_MAX_RATIO
-        return;                                      // Returning a "1" means "ray hit a wall"
-      }      // End if hit
-    } else { // else distance to Y wall < distance to X wall
-      ray.x += (dy * cos) / sin;
-      ray.y += dy;
-      ray.hit = getmap(ray.x, ray.y);
-      if(ray.hit > 127) {                            // if ray hits a wall (a block)
-          ray.face = sin>0 ? 3 : 1;                    // hit south or north face of block
-        ray.offset = sin>0 ? ray.x&63 : 64-(ray.x&63); // Get offset: offset is where on wall ray hits: 0 (left edge) to 63 (right edge)
-          ray.dist = ((ray.y - start_y) << 16) / sin;  // Distance ray traveled.    <<16 = * TRIG_MAX_RATIO
-        return;                                      // Returning 1: means "ray hit a wall"
-      } // End if hit
-    } // End else Xlen<Ylen
-  } while(ray.hit>0); } while (!((sin<0&&ray.y<0) || (sin>0&&ray.y>=(mapsize<<6)) || (cos<0&&ray.x<0) || (cos>0&&ray.x>=(mapsize<<6))) );
-  // loop while ray is in bounds or not going further out of bounds
+  do {
+    do {
+      dy = ny - (ray.y & 63);                        //   north-south component of distance to next east-west wall
+      dx = nx - (ray.x & 63);                        //   east-west component of distance to next north-south wall
+  
+      if(abs32(dx * sin) < abs32(dy * cos)) {        // if(distance to north-south wall < distance to east-west wall) See Footnote 1
+        ray.x += dx;                                   // move ray to north-south wall: x part
+        ray.y += ((dx * sin) / cos);                   // move ray to north-south wall: y part
+        ray.hit = getmap(ray.x, ray.y);                // see what the ray is at on the map
+        if(ray.hit > 127) {                            // if ray hits a wall (a block)
+          ray.face = cos>0 ? 2 : 0;                      // hit west or east face of block
+          ray.offset = cos>0 ? 63-(ray.y&63) : ray.y&63; // Offset is where on wall ray hits: 0 (left edge) to 63 (right edge)
+          ray.dist = ((ray.x - start_x) << 16) / cos;    // Distance ray traveled.    <<16 = * TRIG_MAX_RATIO
+          return;                                      // Exit
+        }
+      } else {                                       // else: distance to Y wall < distance to X wall
+        ray.x += (dy * cos) / sin;                     // move ray to east-west wall: x part
+        ray.y += dy;                                   // move ray to east-west wall: y part
+        ray.hit = getmap(ray.x, ray.y);                // see what the ray is at on the map
+        if(ray.hit > 127) {                            // if ray hits a wall (a block)
+            ray.face = sin>0 ? 3 : 1;                    // hit south or north face of block
+          ray.offset = sin>0 ? ray.x&63 : 63-(ray.x&63); // Get offset: offset is where on wall ray hits: 0 (left edge) to 63 (right edge)
+            ray.dist = ((ray.y - start_y) << 16) / sin;  // Distance ray traveled.    <<16 = * TRIG_MAX_RATIO
+          return;                                      // Exit
+        }
+      }                                              // End if/then/else (x dist < y dist)
+      
+    } while(ray.hit>0);  //loop while ray is not out of bounds
+  } while (!((sin<0&&ray.y<0) || (sin>0&&ray.y>=(mapsize<<6)) || (cos<0&&ray.x<0) || (cos>0&&ray.x>=(mapsize<<6))) ); // loop if ray is not going further out of bounds
   
   // ray will never hit a wall (out of bounds AND going further out of bounds)
-   ray.hit = 0;           // Never hit, so set to out-of-bounds block type (0)
-  ray.face = 0;
-  ray.dist = 0xFFFFFFFF;
+  ray.hit  = 0;           // Never hit, so set to out-of-bounds block type (0)
+  ray.face = 0;           // TODO: set face to face wall hit on block type 0 //ray.face = sin>0 ? (cos>0 ? 2 : 0) : (sin>0 ? 3 : 1);
+  ray.dist = 0x7FFFFFFF;  // Never hits makes distance effectively infinity. 7F instead of FF cause of signed/unsigned conversion issues
   return;
 }
 
@@ -483,36 +488,33 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
 //mid_y = (box.size.h/2) or maybe box.origin.y + (box.size.h/2) (middle in view or pixel on screen)
 //mid_x = (box.size.w/2) or maybe box.origin.x + (box.size.w/2)
 
-  int32_t colheight, angle; //colh, z;
-  uint32_t x, xaddr, xbit, yaddr;
-  uint32_t *target;
-  uint32_t dist[144];                 // Array of distance for each vertical wall segment -- for sprite rendering
-
+  int32_t angle, farthest = 0; //colh, z;
+  int32_t y, colheight, halfheight;
+  uint32_t x, addr, xaddr, yaddr, xbit, xoffset, yoffset;
+  uint32_t *target, *mask;
+  int32_t dist[144];                 // Array of non-cos adjusted distance for each vertical wall segment -- for sprite rendering
+  halfheight = box.size.h/2;
   uint32_t *ctx32 = ((uint32_t*)(((GBitmap*)ctx)->addr));
   
   // Draw Box around view (not needed if fullscreen)
+  //TODO: Draw straight to framebuffer
   if(view_border) {graphics_context_set_stroke_color(ctx, 1); graphics_draw_rect(ctx, GRect(box.origin.x-1, box.origin.y-1, box.size.w+2, box.size.h+2));}  //White Rectangle Border
 
   // Draw background
-    // Umm... ok... A nice black background.  Done.  Next?
-    // Draw Sky from horizion on up
-    //graphics_context_set_fill_color(ctx, 1); graphics_fill_rect(ctx, GRect(box.x, box.origin.y, box.size.w, box.size.h/2), 0, GCornerNone); // White Sky  (Lightning?  Daytime?)
-  uint32_t farthest = 0;
+    graphics_context_set_fill_color(ctx, 0);  graphics_fill_rect(ctx, box, 0, GCornerNone); // Black background
+    // Draw Sky from horizion on up, rotate based upon player angle
+    //graphics_context_set_fill_color(ctx, 1); graphics_fill_rect(ctx, GRect(box.origin.x, box.origin.y, box.size.w, box.size.h/2), 0, GCornerNone); // White Sky  (Lightning?  Daytime?)
+  
   
   for(int16_t col = 0; col < box.size.w; col++) {  // Begin RayTracing Loop
     angle = (fov * (col - (box.size.w/2))) / box.size.w;
     
-    x = col+box.origin.x;  // X screen coordinate
-    xaddr = x >> 5;        // X memory address (for which 32bit screen memory word)
-     xbit = x & 31;        // X bit-shift amount (for which bit within screen memory 32bit word)
-    
     shoot_ray(player.x, player.y, player.facing + angle);  //Shoot rays out of player's eyes.  pew pew.
-    ray.hit &= 127;                                        // If ray hit a block (>127) or not (<128), set ray.hit to valid block type [0-127]
-    if(ray.dist > farthest) farthest = ray.dist;           // farthest (furthest?) wall (for sprite rendering. only render sprites closer than farthest wall)
-    dist[col] = ray.dist;                                  // save distance of this column for sprite rendering later
-    ray.dist = ray.dist * cos_lookup(angle);               // multiply by cos to stop fisheye lens (should be >>16 to get actual dist, but that's all done below)
-    //ray.dist <<= 16;    
-
+    ray.hit &= 127;                                        // Whether ray hit a block (>127) or not (<128), set ray.hit to valid block type [0-127]
+    if(ray.dist > (uint32_t)farthest) farthest = ray.dist; // farthest (furthest?) wall (for sprite rendering. only render sprites closer than farthest wall)
+    dist[col] = (uint32_t)ray.dist;                        // save distance of this column for sprite rendering later
+    ray.dist *= cos_lookup(angle);                         // multiply by cos to stop fisheye lens (should be >>16 to get actual dist, but that's all done below)
+//  ray.dist <<= 16;    // use this if commenting out "ray.dist*=cos" above, cause it <<16's a lot below
     
       // Calculate amount of shade
       //z =  ray.dist >> 16; //z=(ray.dist*cos_lookup(angle))/TRIG_MAX_RATIO;  // z = distance
@@ -520,38 +522,39 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
       //z = sqrt_int(z,10) >> 1; // z was 0-RANGE(max dist visible), now z = 0 to 12: 0=close 10=distant.  Square Root makes it logarithmic
       //z -= 2; if(z<0) z=0;    // Closer still (zWas=zNow: 0-64=0, 65-128=2, 129-192=3, 256=4, 320=6, 384=6, 448=7, 512=8, 576=9, 640=10)
 
-      colheight = (box.size.h << 22) /  ray.dist;  // wall segment height = box.size.h * wallheight * 64(the "zoom factor") / (distance >> 16)
-      colheight = (colheight>box.size.h) ? box.size.h/2 : colheight/2;   // Make sure line isn't drawn beyond bounding box (also halve it cause of 2 32bit textures)
+      colheight = (box.size.h << 21) /  ray.dist;    // wall segment height = box.size.h * wallheight * 64(the "zoom factor") / (distance >> 16) // now /2 (<<21 instead of 22)
+      if(colheight>halfheight) colheight=halfheight; // Make sure line isn't drawn beyond bounding box (also halve it cause of 2 32bit textures)
       
       // Texture the Ray hit, point to 1st half of texture (half, cause a 64x64px texture menas there's 2 uint32_t per texture row.  Also why * 2 below)
-      target = (uint32_t*)texture[squaretype[ray.hit].face[ray.face]]->addr + (ray.offset * 2);// maybe use GBitmap's size veriables to store texture size?
+      target = (uint32_t*)texture[squaretype[ray.hit].face[ray.face]]->addr + ray.offset*2;// maybe use GBitmap's size veriables to store texture size?
     
-      yaddr = ((box.origin.y + (box.size.h/2)) * 5);   // Y Address of vertical center = Y screen coordinate * 5
-      for(int32_t i=0, yoffset=0; i<colheight; i++, yoffset+=5) {
-        int32_t ch = (i * ray.dist / box.size.h) >> 16; // ch = which pixel of the texture is hit (0-31)
-        // total_column_height = box.size.h / (dist>>16) (Total height of 32pixel wall half. This isn't clipped to screen, so could be thousands of pixels tall)
-        // i IS clipped to screen and goes from 3D view's middle to 3D view's top/bottom edge
-        // which pixel in the texture hit is i/total_colum_height = i / (box.size.h / (dist>>16)) = (i * dist / box.size.h) >> 16
-        ctx32[xaddr + yaddr - yoffset] |= (((*target >> (31-ch))&1) << xbit);  // Draw Top Half
-        ctx32[xaddr + yaddr + yoffset] |= (((*(target+1)  >> ch)&1) << xbit);  // Draw Bottom Half
+      x = col+box.origin.x;  // X screen coordinate
+      addr = (x >> 5) + ((box.origin.y + halfheight) * 5); // 32bit memory word containing pixel vertically centered at X. (Address=xaddr + yaddr = (Pixel.X/32) + 5*Pixel.Y)
+       xbit = x & 31;        // X bit-shift amount (for which bit within screen memory's 32bit word the pixel exists)
+    
+      y=0; yoffset=0;  // y is y +/- from center, yoffset is screenmemory position of y and is always = y*5
+      for(; y<colheight; y++, yoffset+=5) {
+        xoffset = (y * ray.dist / box.size.h) >> 16; // xoffset = which pixel of the texture is hit (0-31).  See Footnote 2
+        ctx32[addr - yoffset] |= (((*target >> (31-xoffset))&1) << xbit);  // Draw Top Half
+        ctx32[addr + yoffset] |= (((*(target+1)  >> xoffset)&1) << xbit);  // Draw Bottom Half
       }
-    
-    // Draw Floor/Ceiling
-    for(int32_t i=colheight; i<box.size.h/2; i++) {
-      int32_t map_x = player.x + (((box.size.h << 5) * cos_lookup(player.facing + angle)) / (i * cos_lookup(angle))); // map_x & map_y = spot on map the screen pixel points to
-      int32_t map_y = player.y + (((box.size.h << 5) * sin_lookup(player.facing + angle)) / (i * cos_lookup(angle))); // map_y = player.y + dist_y, dist = height/2 * 64 * (sin if y, cos if x) / i (/cos to un-fisheye)
-      
-      ray.hit = getmap(map_x, map_y) & 127;       // ceiling/ground of which cell is hit
 
-      if(squaretype[ray.hit].floor<MAX_TEXTURES) // If ceiling texture exists (else just show sky)
-        ctx32[((box.origin.y + (box.size.h/2) + i) * 5) + xaddr] |= (((*( ((uint32_t*)texture[squaretype[ray.hit].floor]->addr + (map_x&63) * 2) + ((map_y&63) >> 5)) >> (map_y&31))&1) << xbit);
+    // Draw Floor/Ceiling
+    int32_t temp_x = (((box.size.h << 5) * cos_lookup(player.facing + angle)) / cos_lookup(angle)); // Calculate now to save time later
+    int32_t temp_y = (((box.size.h << 5) * sin_lookup(player.facing + angle)) / cos_lookup(angle)); // Calculate now to save time later
+//if(false)  // enable/disable floor and ceiling
+    for(; y<halfheight; y++, yoffset+=5) {         // y and yoffset continue from wall top&bottom to view edge (unless wall is taller than view edge)
+      int32_t map_x = player.x + (temp_x / y);     // map_x & map_y = spot on map the screen pixel points to
+      int32_t map_y = player.y + (temp_y / y);     // map_y = player.y + dist_y, dist = (height/2 * 64 * (sin if y, cos if x) / i) (/cos to un-fisheye)
+      ray.hit = getmap(map_x, map_y) & 127;        // ceiling/ground of which cell is hit.  &127 shouldn't be needed since it *should* be hitting a spot without a wall
+      if(squaretype[ray.hit].floor<MAX_TEXTURES)   // If ceiling texture exists (else just show sky)
+        ctx32[addr + yoffset] |= (((*( ((uint32_t*)texture[squaretype[ray.hit].floor]->addr + (map_x&63) * 2) + ((map_y&63) >> 5)) >> (map_y&31))&1) << xbit);
       if(squaretype[ray.hit].ceiling<MAX_TEXTURES) // If floor texture exists (else just show abyss)
-        ctx32[((box.origin.y + (box.size.h/2) - i) * 5) + xaddr] |= (((*( ((uint32_t*)texture[squaretype[ray.hit].ceiling]->addr + (map_x&63) * 2) + ((map_y&63) >> 5)) >> (map_y&31))&1) << xbit);
+        ctx32[addr - yoffset] |= (((*( ((uint32_t*)texture[squaretype[ray.hit].ceiling]->addr + (map_x&63) * 2) + ((map_y&63) >> 5)) >> (map_y&31))&1) << xbit);
     } // End Floor/Ceiling
-    
-  
+
   } //End For (End RayTracing Loop)
-  
+    
   // Draw Sprites!
   // Sort sprites by distance from player
   // draw sprites in order from farthest to closest
@@ -563,172 +566,95 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
   // distance
   // type
   // d
-  //dist = dist * cos_lookup(angle);           // multiply by cos to stop fisheye lens (should be >>16 to get actual dist, as is done often below)
 
-/*
-  //Definitions:
-  //  Object = enemy or whatever
-  //  Sprite = object as displayed on screen
+//Definitions:
+//  Object = enemy or item or whatever
+//  Sprite = object as displayed on screen
 
-  // for object = 0 to numobjects
+ 
+  uint8_t numobjects=1;
+  
+  int32_t dx, dy, spritecol;//, xoffset, yoffset;
+  int32_t actualdist;
+  int32_t objectdist;
+//if(false)  // enable/disable drawing of sprites
+  for(uint8_t obj=0; obj<numobjects; obj++) {
+    int32_t objectwidth = 32;           // 32 pixels wide
+    int32_t objectheight = 32;          // 32 pixels tall
+    int32_t objectverticaloffset = -16; // normally center dot is vertically centered, + or - how far to move it.
+    // int32_t object scale size = 1 or 2 or 1/2 -- so 8px can be scaled up 32px big
+  
+    dx = object.x - player.x;
+    dy = object.y - player.y;
+    angle = atan2_lookup(dy, dx); // angle = angle between player's x,y and sprite's x,y
+    objectdist = (abs32(dx)>abs32(dy)) ? (dx<<16) / cos_lookup(angle) : (dy<<16) / sin_lookup(angle);
+  
+    if(objectdist>0) { // if object is in front of player.  note: if actualdist = 0 then player is on top of object
+      if(farthest>=objectdist) { // if ANY wall is further (or =) than object distance
+//         int32_t spritewidth  =  objectwidth*128 / objectdist;  // note: make sure to use not-cosine adjusted distance!
+//         int32_t spriteheight = objectheight*128 / objectdist;
+//         colheight = (box.size.h << 22) /  ray.dist;
+        int32_t spritewidth  = (box.size.h * objectwidth) / objectdist;  // note: make sure to use not-cosine adjusted distance!
+        int32_t spriteheight = (box.size.h * objectheight) / objectdist;
 
-  int32_t diffx, diffy, objectdist, spritecol, offset;
-  diffx=object.x - player.x;
-  diffy=object.y - player.y;
-  //objectdist=sqrt32(diffx*diffx + diffy*diffy);
-  angle = atan2_lookup(diffy, diffx); // angle between player's x,y and sprite's x,y
-  objectdist = (diffx>diffy) ? (diffx<<16) / cos_lookup(angle) : (diffy<<16) / sin_lookup(angle);
-  
-  // if object distance > furthest wall distance, skip drawing object. next in for object loop
-  
-  //int32_t spritesize = ((32*64)) /  objectdist; // << >> 16
-  angle=angle - player.facing;          // angle between center column and sprite
-  angle=((angle+TRIG_MAX_ANGLE+32768)%TRIG_MAX_ANGLE)-32768; // convert angle to [-32768 to 32767]
-  // Should be able to fix the above line by going to signed int16_t variable.
-  //angle now is angle from center column. 0=center of view, -fov/2 is left view edge, fov/2 is right view edge
+        angle=angle - player.facing;          // angle between center column and sprite
+        angle=((angle+TRIG_MAX_ANGLE+32768)%TRIG_MAX_ANGLE)-32768; // repair angle to [-32768 to 32767]
+        // Should be able to fix the above line by casting to signed int16_t variable.
+        //angle now is angle from center column. 0=center of view, -fov/2 is left view edge, fov/2 is right view edge
+actualdist=objectdist;
+        objectdist = (actualdist * cos_lookup(angle)) >> 16;  // fisheye adjustment.  note: distance negative when behind you.  maybe make objectdist uint32? unless negative helps?
+          
+        //Q1=actualdist;  Q2=objectdist;  Q3=farthest;
+ 
+        spritecol = (box.size.w/2) + (box.size.w * angle / fov);  // convert angle to view column (0 - box.width) (col = middle line of sprite) (was = w/2 + (w/2 * angle * fov/2))
 
-  spritecol = (box.size.w/2) + (box.size.w * angle / fov);  // convert angle to view column (0 - box.width) (col = middle line of sprite)
-  // comment out below line and remove it if it still works
-  spritecol = (box.size.w/2) + ((box.size.w/2) * (angle) / (fov/2));  // convert angle to on-screen column (col = middle line of sprite)
-  
-  objectdist = (objectdist * cos_lookup(angle)) >> 16;
-
-  
-  int32_t objectwidth = 32; // 32 pixels wide
-  int32_t objectheight = 32; // 32 pixels tall
-  int32_t objectverticaloffset = -16; // normally center dot is vertically centered, + or - how far to move it.  
-  //int32_t spritescale = 64 /  objectdist; // conversion between object size and size portrayed on screen
-  
-  int32_t spritewidth = (objectwidth*64) /  objectdist;
-  int32_t spriteheight = (objectheight*64) /  objectdist;
-  
-dist[0] = dist[0]+2;
-  
-  int16_t sprite_xmin = spritecol-(spritewidth/2);
-  int16_t sprite_xmax = spritecol+(spritewidth/2);
-  if(sprite_xmax>=0 && sprite_xmin<box.size.w) { // if any of the sprite is horizontally within view
-    //int16_t sprite_ymin = (box.size.h/2) - (((objectheight+objectverticaloffset) * 32) / objectdist);  //(box.size.h/2)-(spriteheight/2); // offset should be double since it's halved
-    //int16_t sprite_ymax = (box.size.h/2) + (((objectheight-objectverticaloffset) * 32) / objectdist);  //(box.size.h/2)+(spriteheight/2);
-    int16_t sprite_ymin = (box.size.h/2) - ((((objectheight/2)+objectverticaloffset) * 64) / objectdist);  //(box.size.h/2)-(spriteheight/2);
-    int16_t sprite_ymax = (box.size.h/2) + ((((objectheight/2)-objectverticaloffset) * 64) / objectdist);  //(box.size.h/2)+(spriteheight/2);
-    if(sprite_ymax>=0 && sprite_ymin<box.size.h) { // if any of the sprite is vertically within view
-      int16_t xmin = sprite_xmin<0 ? 0: sprite_xmin;
-      int16_t xmax = sprite_xmax>box.size.w ? box.size.w : sprite_xmax;
-      int16_t ymin = sprite_ymin<0 ? 0 : sprite_ymin;
-      int16_t ymax = sprite_ymax>box.size.h ? box.size.h : sprite_ymax;
+        int16_t sprite_xmin = spritecol-(spritewidth/2);
+        int16_t sprite_xmax = spritecol+(spritewidth/2);
+        if(sprite_xmax>=0 && sprite_xmin<box.size.w) {    // if any of the sprite is horizontally within view
+          int16_t xmin = sprite_xmin<0 ? 0: sprite_xmin;
+          int16_t xmax = sprite_xmax>box.size.w ? box.size.w : sprite_xmax;
     
-      //column = (x*32/spritewidth) // (x*32/(spritewidth-1) ?
-      for(int16_t x = xmin; x < xmax; x++) {
-        xaddr = (box.origin.x + x) >> 5;
-         xbit = (box.origin.x + x) & 31;
+          int16_t sprite_ymin = (box.size.h/2) - (((spriteheight) + (objectverticaloffset * 256 / objectdist))/2); // note: sprite is not cos adjusted but offset is (to keep it in place)
+          int16_t sprite_ymax = (box.size.h/2) + (((spriteheight) - (objectverticaloffset * 256 / objectdist))/2);
+    
+          if(sprite_ymax>=0 && sprite_ymin<box.size.h) { // if any of the sprite is vertically within view
+            int16_t ymin = sprite_ymin<0 ? 0 : sprite_ymin;
+            int16_t ymax = sprite_ymax>box.size.h ? box.size.h : sprite_ymax;
+
+            for(int16_t x = xmin; x < xmax; x++) {
+              if(dist[x]>=objectdist) {  // if not behind wall
+                xaddr = (box.origin.x + x) >> 5;
+                 xbit = (box.origin.x + x) & 31;
+                //yoffset = (((x - sprite_xmin)*objectwidth) / spritewidth);  // objectwidth/spritewidth = objectdist / 128, so offset=(x - sprite_xmin)*objectdist / 128
+//                 yoffset = (x - sprite_xmin) * actualdist / 128; // make sure to use the original object dist, not the cosine adjusted one
+                yoffset = (x - sprite_xmin) * objectdist / 128; // make sure to use the original object dist, not the cosine adjusted one
+                mask = (uint32_t*)sprite_mask[0]->addr; // target = mask
+                target = (uint32_t*)sprite_image[0]->addr; // target = sprite
+
+                for(int16_t y=ymin; y<ymax; y++) {
+                  //graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + y));
+                  yaddr = (box.origin.y + y) * 5;
+                  xoffset = (objectheight * (y - sprite_ymin)) / spriteheight; // point hit on texture column
+                  if(((*(mask + yoffset) >> xoffset) & 1) == 1) {   // try removing == 1
+                    ctx32[xaddr + yaddr] &= ~(1 << xbit);  // blacken bit
+                  //ctx32[xaddr + yaddr] |= 1 << xbit;     // whiten bit
+                    ctx32[xaddr + yaddr] |= ((*(target+yoffset) >> xoffset)&1) << xbit;  // make bit black or white
+                  }
+                } // next y
+                
+              } // end display column if in front of wall
+            } // next x
       
-offset = (((x - sprite_xmin)*objectwidth) / spritewidth);
-uint32_t* mask = (uint32_t*)sprite_mask[0]->addr; // target = mask
-target = (uint32_t*)sprite_image[0]->addr; // target = sprite
-        
-        
-        for(int16_t y = ymin; y < ymax; y++) {
-          yaddr = (box.origin.y + y) * 5;
-int32_t ch = (objectheight * (y - sprite_ymin)) / spriteheight;
-if(((*(offset + mask) >> ch) & 1) == 1) {
-graphics_context_set_stroke_color(ctx, ((*(target+offset) >> ch)&1));
-graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + y));
-            ctx32[xaddr + yaddr] &= ~(1 << xbit);
-//ctx32[xaddr + yaddr] |=  (1 << xbit);
-ctx32[xaddr + yaddr] |=  (((*(target+offset) >> ch)&1) << xbit);
-}
-        } // end y loop
-      } // end x loop
-    } // end within vertical view
-  } // end within horizontal view
-  // end object loop
-*/
-    //Definitions:
-  //  Object = enemy or whatever
-  //  Sprite = object as displayed on screen
+          } // end display if within y bounds
+        } // end display if within x bounds
+      } // end display if within farthest
+    } // end display if not behind you
+  } // next obj
+} // end draw 3D function
 
-  // for object = 0 to numobjects
-  int32_t diffx, diffy, objectdist, spritecol, offset;
 
-  
-  int32_t objectwidth = 32;           // 32 pixels wide
-  int32_t objectheight = 32;          // 32 pixels tall
-  int32_t objectverticaloffset = -16; // normally center dot is vertically centered, + or - how far to move it.
-  // int32_t object scale size = 1 or 2 or 1/2 -- so 8px can be scaled up 32px big
-  
-  diffx=object.x - player.x;
-  diffy=object.y - player.y;
-  //objectdist=sqrt32(diffx*diffx + diffy*diffy);
-  angle = atan2_lookup(diffy, diffx); // angle between player's x,y and sprite's x,y
-  objectdist = (abs32(diffx)>abs32(diffy)) ? (diffx<<16) / cos_lookup(angle) : (diffy<<16) / sin_lookup(angle);
-  
-  int32_t spritewidth  =  objectwidth*128 / objectdist;
-  int32_t spriteheight = objectheight*128 / objectdist;
-  
-  // if object distance > furthest wall distance, skip drawing object. next in for object loop
 
-  
-  angle=angle - player.facing;          // angle between center column and sprite
-  angle=((angle+TRIG_MAX_ANGLE+32768)%TRIG_MAX_ANGLE)-32768; // repair angle to [-32768 to 32767]
-  // Should be able to fix the above line by casting to signed int16_t variable.
-  //angle now is angle from center column. 0=center of view, -fov/2 is left view edge, fov/2 is right view edge
-  objectdist = (objectdist * cos_lookup(angle)) >> 16;  // fisheye adjustment.  note: distance negative when behind you.  maybe make objectdist uint32? unless negative helps?
-  
-  
-    
-  spritecol = (box.size.w/2) + (box.size.w * angle / fov);  // convert angle to view column (0 - box.width) (col = middle line of sprite)
-  // comment out below line and remove it if it still works
-  //spritecol = (box.size.w/2) + ((box.size.w/2) * (angle) / (fov/2));  // convert angle to on-screen column (col = middle line of sprite)
 
-Q1=objectdist;
-Q2=angle;
-Q3=spritecol;
-Q4=spritewidth;
-Q5=spriteheight;
-  
-  
-//graphics_context_set_stroke_color(ctx, time(NULL)%2);
-
-  int32_t sprite_xmin = spritecol-(spritewidth/2);
-  int32_t sprite_xmax = spritecol+(spritewidth/2);
-  if(sprite_xmax>=0 && sprite_xmin<box.size.w) {    // if any of the sprite is horizontally within view
-    int32_t xmin = sprite_xmin<0 ? 0: sprite_xmin;
-    int32_t xmax = sprite_xmax>box.size.w ? box.size.w : sprite_xmax;
-    
-//     int16_t sprite_ymin = (box.size.h/2) - (((objectheight/2)+objectverticaloffset)*128 / objectdist);
-//     int16_t sprite_ymax = (box.size.h/2) + (((objectheight/2)-objectverticaloffset)*128 / objectdist);
-    // below, sprite is not cos adjusted but offset is (to keep it in place)
-    int32_t sprite_ymin = (box.size.h/2) - (((spriteheight) + (objectverticaloffset * 256 / objectdist))/2);
-    int32_t sprite_ymax = (box.size.h/2) + (((spriteheight) - (objectverticaloffset * 256 / objectdist))/2);
-    
-   // spriteheight is objectheight*128 / objectdist;
-    // maybe change int32_ts back to 16 -- turns out it's when distance is 0 that sprite gets huge.
-    
-    if(sprite_ymax>=0 && sprite_ymin<box.size.h) { // if any of the sprite is vertically within view
-      int32_t ymin = sprite_ymin<0 ? 0 : sprite_ymin;
-      int32_t ymax = sprite_ymax>box.size.h ? box.size.h : sprite_ymax;
-
-      for(int32_t x = xmin; x < xmax; x++) {
-        if(((int32_t)dist[x])>=objectdist) {  /////////////// if not behind wall
-      xaddr = (box.origin.x + x) >> 5;
-       xbit = (box.origin.x + x) & 31;
-
- offset = (((x - sprite_xmin)*objectwidth) / spritewidth);  // objectwidth/spritewidth = objectdist / 128, so offset=(x - sprite_xmin)*objectdist / 128
-// offset = (x - sprite_xmin) * objectdist / 128; // make sure to use the original object dist, not the adjusted one
- uint32_t* mask = (uint32_t*)sprite_mask[0]->addr; // target = mask
- target = (uint32_t*)sprite_image[0]->addr; // target = sprite
-  
-  for(int32_t y=ymin; y<ymax; y++) {
-            //graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + y));
-             yaddr = (box.origin.y + y) * 5;
-             int32_t ch = (objectheight * (y - sprite_ymin)) / spriteheight;
-             if(((*(offset + mask) >> ch) & 1) == 1) {   // try removing == 1
-               ctx32[xaddr + yaddr] &= ~(1 << xbit);  // blacken bit
-               //ctx32[xaddr + yaddr] |=  ((time(NULL)%2) << xbit);
-               ctx32[xaddr + yaddr] |=  (((*(target+offset) >> ch)&1) << xbit);  // make bit black or white
-             }
-           } // next y
-        
         //for(int16_t row=0; row<(box.size.h/2); row++) {
           //uint32_t y;
           //y = (box.size.h/2) - row;
@@ -743,14 +669,8 @@ Q5=spriteheight;
 //             graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + (box.size.h/2) + row));
           //yaddr = (box.origin.y + y) * 5;
           //graphics_context_set_stroke_color(ctx, ((*(target+offset) >> ch)&1));
-          } // end if in front of wall
-        } // next x
-      } // end if within y bounds
-    } // end if within x bounds
-  //} // for coladd
-
-
-
+  
+  
   /*
   
   int32_t spritewidth = (objectwidth*64) /  objectdist;
@@ -795,6 +715,7 @@ ctx32[xaddr + yaddr] |=  (((*(target+offset) >> ch)&1) << xbit);
       } // end x loop
     } // end within vertical view
   } // end within horizontal view
+  } // end if dist>0
   // end object loop
   
   */
@@ -802,7 +723,7 @@ ctx32[xaddr + yaddr] |=  (((*(target+offset) >> ch)&1) << xbit);
   
   
   
-} // end draw 3D function
+
 
 static void graphics_layer_update_proc(Layer *me, GContext *ctx) {
   static char text[40];  //Buffer to hold text
@@ -811,7 +732,8 @@ static void graphics_layer_update_proc(Layer *me, GContext *ctx) {
   
   //draw_3D(ctx,  GRect(view_x, view_y, view_w, view_h));
   //draw_3D(ctx,  view);
-  draw_3D(ctx,  GRect(1, 25, 142, 128));
+  draw_3D(ctx,  GRect(1, 34, 142, 128));
+  draw_3D(ctx,  GRect(4, 110, 40, 40));
 //   draw_map(ctx, GRect(4, 110, 40, 40), 4);
   
   time_ms(&sec2, &ms2);  //2nd Time Snapshot
@@ -827,7 +749,6 @@ static void graphics_layer_update_proc(Layer *me, GContext *ctx) {
   else
      app_timer_register(10, main_loop, NULL);     // took longer than 40ms, loop  in 10ms (asap)
 }
-
 
 // ------------------------------------------------------------------------ //
 //  Button Pushing
@@ -914,3 +835,9 @@ int main(void) {
 //      Used to be: if((dx*TRIG_MAX_RATIO/cos) < (dy*TRIG_MAX_RATIO/sin)).  Added abs cause of sign changes
 //   & before that: if(sqrt(dxx*dxx + dxy*dxy) < sqrt(dyx*dyx + dyy*dyy)), though got rid of "sqrt" on both sides
 //   To learn more: www.permadi.com/tutorial/raycast/rayc8.html
+
+// 2: xoffset = (y * ray.dist / box.size.h) >> 16;
+//    was 
+// total_column_height = box.size.h / (dist>>16) (Total height of 32pixel wall half. This isn't clipped to screen, so could be thousands of pixels tall)
+// i IS clipped to screen and goes from 3D view's middle to 3D view's top/bottom edge
+// which pixel in the texture hit is i/total_colum_height = i / (box.size.h / (dist>>16)) = (i * dist / box.size.h) >> 16
