@@ -1,5 +1,5 @@
 /**********************************************************************************
-   Pebble 3D FPS Engine v0.7 beta
+   Pebble 3D FPS Engine v0.9 beta
    Created by Rob Spiess (robisodd@gmail.com) on June 23, 2014
   *********************************************************************************
   v0.1: Initial Release
@@ -250,6 +250,7 @@ void UnLoadMapTextures() {
 void GenerateSquareMap() {
   squaretype[0].ceiling = 255; // outside sky
   squaretype[0].floor   = 6;   // outside grass
+  squaretype[0].face[0]=squaretype[0].face[1]=squaretype[0].face[2]=squaretype[0].face[3]=5;
 
   squaretype[1].face[0]=squaretype[1].face[1]=squaretype[1].face[2]=squaretype[1].face[3]=5;
   squaretype[1].ceiling = 4;
@@ -270,7 +271,7 @@ void GenerateSquareMap() {
   
    player.x = 1 * 64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
    object.x = 2 * 64; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
-   player.x = 2 * 64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
+   player.x = 4 * 32 + 16; player.y = (64*mapsize)/2; player.facing=TRIG_MAX_ANGLE/2;    // start inside
    object.x = 1 * 64; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
 //  player.x = ((64*mapsize)/2)-64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
 //  object.x = (64*mapsize)/2; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
@@ -380,14 +381,14 @@ static void main_loop(void *data) {
 //modifies: global RayStruct ray
 void shoot_ray(int32_t start_x, int32_t start_y, int32_t angle) {
   int32_t sin, cos, dx, dy, nx, ny;
-  
+
     sin = sin_lookup(angle);
     cos = cos_lookup(angle);
   ray.x = start_x;// + (cos>>11);  // fixes fisheye, but puts you inside walls if you're too close. was ((32*cos)>>16), 32 being dist from player to edge of view plane
   ray.y = start_y;// + (sin>>11);
      ny = sin>0 ? 64 : -1;
      nx = cos>0 ? 64 : -1;
-  
+
   do {
     do {
       dy = ny - (ray.y & 63);                        //   north-south component of distance to next east-west wall
@@ -487,8 +488,9 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
 
 //mid_y = (box.size.h/2) or maybe box.origin.y + (box.size.h/2) (middle in view or pixel on screen)
 //mid_x = (box.size.w/2) or maybe box.origin.x + (box.size.w/2)
-
-  int32_t angle, farthest = 0; //colh, z;
+ int32_t dx, dy;
+  int16_t angle;
+  int32_t farthest = 0; //colh, z;
   int32_t y, colheight, halfheight;
   uint32_t x, addr, xaddr, yaddr, xbit, xoffset, yoffset;
   uint32_t *target, *mask;
@@ -507,7 +509,10 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
   
   
   for(int16_t col = 0; col < box.size.w; col++) {  // Begin RayTracing Loop
-    angle = (fov * (col - (box.size.w/2))) / box.size.w;
+//     angle = (fov * (col - (box.size.w/2))) / box.size.w;
+    dx = (64*(col-(box.size.w/2)))/box.size.w;
+    dy = 64;
+    angle = atan2_lookup(dx, dy);
     
     shoot_ray(player.x, player.y, player.facing + angle);  //Shoot rays out of player's eyes.  pew pew.
     ray.hit &= 127;                                        // Whether ray hit a block (>127) or not (<128), set ray.hit to valid block type [0-127]
@@ -522,7 +527,7 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
       //z = sqrt_int(z,10) >> 1; // z was 0-RANGE(max dist visible), now z = 0 to 12: 0=close 10=distant.  Square Root makes it logarithmic
       //z -= 2; if(z<0) z=0;    // Closer still (zWas=zNow: 0-64=0, 65-128=2, 129-192=3, 256=4, 320=6, 384=6, 448=7, 512=8, 576=9, 640=10)
 
-      colheight = (box.size.h << 21) /  ray.dist;    // wall segment height = box.size.h * wallheight * 64(the "zoom factor") / (distance >> 16) // now /2 (<<21 instead of 22)
+      colheight = (box.size.h << 21) /  ray.dist;    // half wall segment height = box.size.h * wallheight * 64(the "zoom factor") / (distance >> 16) // now /2 (<<21 instead of 22)
       if(colheight>halfheight) colheight=halfheight; // Make sure line isn't drawn beyond bounding box (also halve it cause of 2 32bit textures)
       
       // Texture the Ray hit, point to 1st half of texture (half, cause a 64x64px texture menas there's 2 uint32_t per texture row.  Also why * 2 below)
@@ -532,7 +537,7 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
       addr = (x >> 5) + ((box.origin.y + halfheight) * 5); // 32bit memory word containing pixel vertically centered at X. (Address=xaddr + yaddr = (Pixel.X/32) + 5*Pixel.Y)
        xbit = x & 31;        // X bit-shift amount (for which bit within screen memory's 32bit word the pixel exists)
     
-      y=0; yoffset=0;  // y is y +/- from center, yoffset is screenmemory position of y and is always = y*5
+      y=0; yoffset=0;  // y is y +/- from vertical center, yoffset is the screen memory position of y (and is always = y*5)
       for(; y<colheight; y++, yoffset+=5) {
         xoffset = (y * ray.dist / box.size.h) >> 16; // xoffset = which pixel of the texture is hit (0-31).  See Footnote 2
         ctx32[addr - yoffset] |= (((*target >> (31-xoffset))&1) << xbit);  // Draw Top Half
@@ -573,157 +578,103 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
 
  
   uint8_t numobjects=1;
-  
-  int32_t dx, dy, spritecol;//, xoffset, yoffset;
-  int32_t actualdist;
-  int32_t objectdist;
+  int32_t spritecol, objectdist;  //, xoffset, yoffset;
+//   int32_t sin, cos;
 //if(false)  // enable/disable drawing of sprites
   for(uint8_t obj=0; obj<numobjects; obj++) {
-    int32_t objectwidth = 32;           // 32 pixels wide
-    int32_t objectheight = 32;          // 32 pixels tall
-    int32_t objectverticaloffset = -16; // normally center dot is vertically centered, + or - how far to move it.
-    // int32_t object scale size = 1 or 2 or 1/2 -- so 8px can be scaled up 32px big
-  
     dx = object.x - player.x;
     dy = object.y - player.y;
     angle = atan2_lookup(dy, dx); // angle = angle between player's x,y and sprite's x,y
-    objectdist = (abs32(dx)>abs32(dy)) ? (dx<<16) / cos_lookup(angle) : (dy<<16) / sin_lookup(angle);
-  
-    if(objectdist>0) { // if object is in front of player.  note: if actualdist = 0 then player is on top of object
+    objectdist =  (((dx^(dx>>31)) - (dx>>31)) > ((dy^(dy>>31)) - (dy>>31))) ? (dx<<16) / cos_lookup(angle) : (dy<<16) / sin_lookup(angle);
+//     objectdist = (abs32(dx)>abs32(dy)) ? (dx<<16) / cos_lookup(angle) : (dy<<16) / sin_lookup(angle);
+    angle = angle - player.facing;  // angle is now angle between center view column and object. <0=left of center, 0=center column, >0=right of center
+    if(cos_lookup(angle)>0) { // if object is in front of player.  note: if angle = 0 then object is straight right or left of the player
       if(farthest>=objectdist) { // if ANY wall is further (or =) than object distance
-//         int32_t spritewidth  =  objectwidth*128 / objectdist;  // note: make sure to use not-cosine adjusted distance!
-//         int32_t spriteheight = objectheight*128 / objectdist;
-//         colheight = (box.size.h << 22) /  ray.dist;
-        int32_t spritewidth  = (box.size.h * objectwidth) / objectdist;  // note: make sure to use not-cosine adjusted distance!
-        int32_t spriteheight = (box.size.h * objectheight) / objectdist;
+//         spritecol = (box.size.w/2) + (box.size.w * angle / fov);  // convert angle to view column (0 - box.width) (col = middle line of sprite) (was = w/2 + (w/2 * angle * fov/2))
+        spritecol = (box.size.w/2) + ((sin_lookup(angle)*box.size.w)>>16);  // column on screen of sprite center
 
-        angle=angle - player.facing;          // angle between center column and sprite
-        angle=((angle+TRIG_MAX_ANGLE+32768)%TRIG_MAX_ANGLE)-32768; // repair angle to [-32768 to 32767]
-        // Should be able to fix the above line by casting to signed int16_t variable.
-        //angle now is angle from center column. 0=center of view, -fov/2 is left view edge, fov/2 is right view edge
-actualdist=objectdist;
-        objectdist = (actualdist * cos_lookup(angle)) >> 16;  // fisheye adjustment.  note: distance negative when behind you.  maybe make objectdist uint32? unless negative helps?
-          
-        //Q1=actualdist;  Q2=objectdist;  Q3=farthest;
- 
-        spritecol = (box.size.w/2) + (box.size.w * angle / fov);  // convert angle to view column (0 - box.width) (col = middle line of sprite) (was = w/2 + (w/2 * angle * fov/2))
-
-        int16_t sprite_xmin = spritecol-(spritewidth/2);
-        int16_t sprite_xmax = spritecol+(spritewidth/2);
+        int32_t objectwidth = 32;           // 32 pixels wide  TODO: maybe other sized objects?  Besides scaling?
+        int32_t objectheight = 64;          // 32 pixels tall
+        int32_t objectverticaloffset = 0;//16; // normally center dot is vertically centered, + or - how far to move it.
+        int32_t spritescale = box.size.h;// * 20 / 10;
+        int32_t spritewidth  = (spritescale * objectwidth) / objectdist;   // should be box.size.w, but wanna keep sprite h/w proportionate
+        int32_t spriteheight = (spritescale * objectheight) / objectdist;  // note: make sure to use not-cosine adjusted distance!
+//         int32_t spriteheight = ((spritescale * objectheight)<<16) / (objectdist*cos_lookup(angle));  // note: make sure to use not-cosine adjusted distance!
+//         int32_t halfspriteheight = spriteheight/2;
+        int32_t spriteverticaloffset = ((objectverticaloffset * spritescale) << 16) / (objectdist * cos_lookup(angle)); // fisheye adjustment
+//         int32_t spriteverticaloffset = ((objectverticaloffset * box.size.h) << 16) / (objectdist * cos_lookup(angle));
+//         int32_t spriteverticaloffset = ((((objectverticaloffset * spritescale) + (32*box.size.h)) << 16) / (objectdist * cos_lookup(angle))); // floor it
+        
+        
+        int16_t sprite_xmin = spritecol - (spritewidth/2);
+        int16_t sprite_xmax = sprite_xmin + spritewidth;  // was =spritecol+(spritewidth/2);  Changed to display whole sprite cause /2 loses info
         if(sprite_xmax>=0 && sprite_xmin<box.size.w) {    // if any of the sprite is horizontally within view
           int16_t xmin = sprite_xmin<0 ? 0: sprite_xmin;
           int16_t xmax = sprite_xmax>box.size.w ? box.size.w : sprite_xmax;
+
+          
+// perfectly puts 32x32 sprite on ceiling
+//int32_t objectwidth = 32;
+//int32_t objectheight = 64;
+//int32_t objectverticaloffset = 0;
+//int32_t spritescale = box.size.h;
+//int32_t spritewidth  = (spritescale * objectwidth) / objectdist;
+//int32_t spriteheight = (spritescale * objectheight) / objectdist;
+//int32_t spriteverticaloffset = ((objectverticaloffset * spritescale) << 16) / (objectdist * cos_lookup(angle)); // fisheye adjustment
+//int16_t sprite_ymax = spriteverticaloffset + ((box.size.h + spriteheight)/2);// + (((32*box.size.h) << 16) / (objectdist * cos_lookup(angle)));
+//int16_t sprite_ymin = sprite_ymax - spriteheight; // note: sprite is not cos adjusted but offset is (to keep it in place)
+
+          
+//           int16_t sprite_ymin = (box.size.h/2) - (spriteheight/2) + spriteverticaloffset; // note: sprite is not cos adjusted but offset is (to keep it in place)
+//           int16_t sprite_ymax = (box.size.h/2) + (spriteheight/2) + spriteverticaloffset;
+//           int16_t sprite_ymin = halfheight + spriteverticaloffset - (spriteheight/2); // note: sprite is not cos adjusted but offset is (to keep it in place)
+//           int16_t sprite_ymax = halfheight + spriteverticaloffset + (spriteheight/2);
+
+//           int16_t sprite_ymax = halfheight + spriteverticaloffset + (spriteheight/2);
+//           int16_t sprite_ymin = sprite_ymax - spriteheight; // note: sprite is not cos adjusted but offset is (to keep it in place)
+
+//           int16_t sprite_ymax = halfheight + ((box.size.h << 21) / (objectdist * cos_lookup(angle)));
+          int16_t sprite_ymax = spriteverticaloffset + ((box.size.h + spriteheight)/2);// + (((32*box.size.h) << 16) / (objectdist * cos_lookup(angle)));
+//           int16_t sprite_ymax = halfheight + (32*box.size.h/objectdist);// + ((box.size.h << 21) / (objectdist * cos_lookup(angle)));
+          int16_t sprite_ymin = sprite_ymax - spriteheight; // note: sprite is not cos adjusted but offset is (to keep it in place)
+          
+//           int16_t sprite_ymin = halfheight + spriteverticaloffset - spriteheight; // note: sprite is not cos adjusted but offset is (to keep it in place)
+//           int16_t sprite_ymax = halfheight + spriteverticaloffset;
     
-          int16_t sprite_ymin = (box.size.h/2) - (((spriteheight) + (objectverticaloffset * 256 / objectdist))/2); // note: sprite is not cos adjusted but offset is (to keep it in place)
-          int16_t sprite_ymax = (box.size.h/2) + (((spriteheight) - (objectverticaloffset * 256 / objectdist))/2);
-    
+
+          
           if(sprite_ymax>=0 && sprite_ymin<box.size.h) { // if any of the sprite is vertically within view
             int16_t ymin = sprite_ymin<0 ? 0 : sprite_ymin;
             int16_t ymax = sprite_ymax>box.size.h ? box.size.h : sprite_ymax;
-
+///BEGIN DRAWING LOOPS
             for(int16_t x = xmin; x < xmax; x++) {
               if(dist[x]>=objectdist) {  // if not behind wall
                 xaddr = (box.origin.x + x) >> 5;
-                 xbit = (box.origin.x + x) & 31;
-                //yoffset = (((x - sprite_xmin)*objectwidth) / spritewidth);  // objectwidth/spritewidth = objectdist / 128, so offset=(x - sprite_xmin)*objectdist / 128
-//                 yoffset = (x - sprite_xmin) * actualdist / 128; // make sure to use the original object dist, not the cosine adjusted one
-                yoffset = (x - sprite_xmin) * objectdist / 128; // make sure to use the original object dist, not the cosine adjusted one
-                mask = (uint32_t*)sprite_mask[0]->addr; // target = mask
-                target = (uint32_t*)sprite_image[0]->addr; // target = sprite
-
-                for(int16_t y=ymin; y<ymax; y++) {
+                xbit  = (box.origin.x + x) & 31;
+                xoffset = (x - sprite_xmin) * objectdist / spritescale; // x point hit on texture -- make sure to use the original object dist, not the cosine adjusted one
+                mask   = (uint32_t*)sprite_mask[0]->addr + xoffset;  // mask = mask
+                target = (uint32_t*)sprite_image[0]->addr + xoffset; // target = sprite
+                yaddr = (box.origin.y + ymin) * 5;
+                
+                for(int16_t y=ymin; y<ymax; y++, yaddr+=5) {
                   //graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + y));
-                  yaddr = (box.origin.y + y) * 5;
-                  xoffset = (objectheight * (y - sprite_ymin)) / spriteheight; // point hit on texture column
-                  if(((*(mask + yoffset) >> xoffset) & 1) == 1) {   // try removing == 1
+                  yoffset = (y - sprite_ymin) * objectdist / spritescale; // y point hit on texture column (was = (objectheight*(y-sprite_ymin))/spriteheight)
+                  if(((*mask >> yoffset) & 1) == 1) {   // If mask point isn't clear, then draw point.  TODO: try removing == 1
                     ctx32[xaddr + yaddr] &= ~(1 << xbit);  // blacken bit
                   //ctx32[xaddr + yaddr] |= 1 << xbit;     // whiten bit
-                    ctx32[xaddr + yaddr] |= ((*(target+yoffset) >> xoffset)&1) << xbit;  // make bit black or white
+                    ctx32[xaddr + yaddr] |= ((*(target) >> yoffset)&1) << xbit;  // make bit white or keep it black
+                  //ctx32[xaddr + yaddr] |= ((*((uint32_t*)sprite_image[0]->addr + xoffset) >> yoffset)&1) << xbit;  // make bit white or keep it black
                   }
                 } // next y
-                
               } // end display column if in front of wall
             } // next x
-      
+//END DRAWING LOOPS      
           } // end display if within y bounds
         } // end display if within x bounds
       } // end display if within farthest
     } // end display if not behind you
   } // next obj
 } // end draw 3D function
-
-
-
-
-        //for(int16_t row=0; row<(box.size.h/2); row++) {
-          //uint32_t y;
-          //y = (box.size.h/2) - row;
-          //y = (box.size.h/2) + row;
-          //row*dist/64=x   // x is distance above/below eye-level at sprite distance
-  
-             //int32_t spothit = (row * objectdist) / 64;
-//           int32_t spothit = (row * objectdist) / 128;
-//           if(spothit<(objectheight/2)+objectverticaloffset)
-//             graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + (box.size.h/2) - row));
-//           if(spothit<(objectheight/2)-objectverticaloffset)
-//             graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + (box.size.h/2) + row));
-          //yaddr = (box.origin.y + y) * 5;
-          //graphics_context_set_stroke_color(ctx, ((*(target+offset) >> ch)&1));
-  
-  
-  /*
-  
-  int32_t spritewidth = (objectwidth*64) /  objectdist;
-  int32_t spriteheight = (objectheight*64) /  objectdist;
-  
-
-  
-  int16_t sprite_xmin = spritecol-(spritewidth/2);
-  int16_t sprite_xmax = spritecol+(spritewidth/2);
-  if(sprite_xmax>=0 && sprite_xmin<box.size.w) { // if any of the sprite is horizontally within view
-    //int16_t sprite_ymin = (box.size.h/2) - (((objectheight+objectverticaloffset) * 32) / objectdist);  //(box.size.h/2)-(spriteheight/2); // offset should be double since it's halved
-    //int16_t sprite_ymax = (box.size.h/2) + (((objectheight-objectverticaloffset) * 32) / objectdist);  //(box.size.h/2)+(spriteheight/2);
-    int16_t sprite_ymin = (box.size.h/2) - ((((objectheight/2)+objectverticaloffset) * 64) / objectdist);  //(box.size.h/2)-(spriteheight/2);
-    int16_t sprite_ymax = (box.size.h/2) + ((((objectheight/2)-objectverticaloffset) * 64) / objectdist);  //(box.size.h/2)+(spriteheight/2);
-    if(sprite_ymax>=0 && sprite_ymin<box.size.h) { // if any of the sprite is vertically within view
-      int16_t xmin = sprite_xmin<0 ? 0: sprite_xmin;
-      int16_t xmax = sprite_xmax>box.size.w ? box.size.w : sprite_xmax;
-      int16_t ymin = sprite_ymin<0 ? 0 : sprite_ymin;
-      int16_t ymax = sprite_ymax>box.size.h ? box.size.h : sprite_ymax;
-    
-      //column = (x*32/spritewidth) // (x*32/(spritewidth-1) ?
-      for(int16_t x = xmin; x < xmax; x++) {
-        xaddr = (box.origin.x + x) >> 5;
-         xbit = (box.origin.x + x) & 31;
-      
-offset = (((x - sprite_xmin)*objectwidth) / spritewidth);
-uint32_t* mask = (uint32_t*)sprite_mask[0]->addr; // target = mask
-target = (uint32_t*)sprite_image[0]->addr; // target = sprite
-        
-        
-        for(int16_t y = ymin; y < ymax; y++) {
-          yaddr = (box.origin.y + y) * 5;
-int32_t ch = (objectheight * (y - sprite_ymin)) / spriteheight;
-if(((*(offset + mask) >> ch) & 1) == 1) {
-graphics_context_set_stroke_color(ctx, ((*(target+offset) >> ch)&1));
-graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + y));
-            ctx32[xaddr + yaddr] &= ~(1 << xbit);
-//ctx32[xaddr + yaddr] |=  (1 << xbit);
-ctx32[xaddr + yaddr] |=  (((*(target+offset) >> ch)&1) << xbit);
-}
-        } // end y loop
-      } // end x loop
-    } // end within vertical view
-  } // end within horizontal view
-  } // end if dist>0
-  // end object loop
-  
-  */
-  
-  
-  
-  
-
 
 static void graphics_layer_update_proc(Layer *me, GContext *ctx) {
   static char text[40];  //Buffer to hold text
