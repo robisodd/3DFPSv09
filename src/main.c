@@ -48,11 +48,16 @@
         Changed map to unsigned (uint8 from int8)
         Map squares now point to Square_type array
         Adding sprite support...
-        ray.dist is signed again (to compare with sprite dist which can be negative if behind you)
+        Got rid of FOV!  Now uses arctan to determine angle; MUCH straighter walls and better positioning
+        Got rid of view GRect
+        player.facing is now int16 -- removed all player.facing%TRIG_MAX_ANGLE and other large angle corrections
         
   To Do:
+        Maybe X&Y coordinates can be int16 (max board of 512x512=256kB)
         Texture looping
         Add switches on walls to change cells
+        Open doors
+        Ceiling height?  Crushing
         
         Change how map/walls/textures/levels work:
           Levels specify size/shape, layout and which textures are to be loaded
@@ -66,6 +71,7 @@
               Holds pointer to texture
               Info if texture is 32x32 or 64x64 or 64x32 or 16x32 or whatever
             Possible inner/outer texture depending on direction hit?
+              Currently texture is invisible from the inside
             Darkness Amount (and if distance shading is on/off)
             Permissable to walk through
             Permissable for enemies to walk through
@@ -74,13 +80,27 @@
             Maybe ray modifying? e.g. Mirror or Light-bending gravity well?  No, nevermind.
             Note: Square_Type[0] is out of bounds render type
             
-        Sprite shadow is the shadow of the square it's in.
-        Define terms:
-          Tile
-          Square
-          Map
-          X & Y (is it pixel specific 64 or map squares)
+        Sprite shading is the shading of the square it's in.
+                      
+Definitions:
+  Object: enemy or item or other thing
+  Sprite: object as displayed on screen
+          Tile: 
+          Square: X&Y on map
+                  10x10 map has 100 squares
+                  each square is 8bits: High bit=ray hits walls, 7bits=squaretype
+                  = coordinate / 64 (aka >>6)
+          SquareType: [0-127] Type of square for the map
+                      Holds information about textures, passible, etc
+          Map: Grid (or Array) of squares
+               Mabye should rename to Level or PlayField? Map sounds like 2D top-down
+          Wall:  What a ray hits, usually impassible by player
+          Coordinate: X & Y position on map
+                      Pixel specific, 64 per square
+                      e.g. 10x10 map has 640x640=409600 coordinate points
+          Shading:
           
+
   To Fix:
         Wall textures map to exact coordinate, not distance from left edge
           So textures on corners don't line up
@@ -120,30 +140,12 @@
 // 529a7262-efdb-48d4-80d4-da14963099b9
 #include "pebble.h"
 
-#define mapsize 11             // Map is 90x90 squares, or whatever number is here
+#define mapsize 21             // Map is mapsize x mapsize squares big
 #define MAX_TEXTURES 10        // Most number of textures there's likely to be.  Feel free to increase liberally, but no more than 254.
 #define IDCLIP false           // Walk thru walls
 #define view_border true       // Draw border around 3D viewing window
 
-//----------------------------------//
-// Viewing Window Size and Position //
-//----------------------------------//
-// beneficial to: (set fov as divisible by view_w) and (have view_w evenly divisible by 2)
-// e.g.: view_w=144 is good since 144/2=no remainder. Set fov = 13104fov (since it = 144w x 91 and is close to 20% of 65536)
-
-GRect view;
-int32_t    fov = 10650;             // Field of view angle (20% of a circle is good) (TRIG_MAX_RATIO = 0x10000 or 65536) * 20%
-//view = GRect(0, 0, 144, 168); fov = 13104;  // Full Screen (You should also comment out drawing the text box)
-//view = GRect(20, 30, 100, 100); fov = 13100;  // Smaller square
-
-//Nearly full screen
-//#define fov 13064              // Field of view angle (20% of a circle is good) (TRIG_MAX_RATIO = 0x10000 or 65536) * 20%
-
-//----------------------------------//
-//#define fov_over_w fov/view_w  // Do math now so less during execution
-//#define half_view_w view_w/2   //
-//#define half_view_h view_h/2
-//----------------------------------//
+static uint8_t map[mapsize * mapsize];  // 0-255, 0-127 are squaretypes[], high bit set means ray hits wall
 
 GBitmap *texture[MAX_TEXTURES];
 GBitmap *sprite_image[1];
@@ -160,18 +162,28 @@ struct squaretypestruct {
 typedef struct PlayerStruct {
   int32_t x;                  // Player's X Position (64 pixels per square)
   int32_t y;                  // Player's Y Position (64 pixels per square)
-  int32_t facing;             // Player Direction Facing (from 0 - TRIG_MAX_ANGLE)
+  int16_t facing;             // Player Direction Facing (from 0 - TRIG_MAX_ANGLE)
 } PlayerStruct;
 static PlayerStruct player;
 
 static PlayerStruct object;
 
+typedef struct ObjectStruct {
+  int32_t x;                  // Player's X Position (64 pixels per square)
+  int32_t y;                  // Player's Y Position (64 pixels per square)
+  int16_t health;             //
+  uint8_t type;               // Enemy, Lamp, Coin, etc
+  uint8_t sprite;             // sprite_image[] and sprite_mask[] for object
+  int32_t data1;              // 
+  int32_t data2;              // 
+} ObjectStruct;
+
 typedef struct RayStruct {
-   int32_t x;                 // x coordinate on map the ray hit
-   int32_t y;                 // y coordinate on map the ray hit
-  uint32_t dist;              // length of the ray / distance ray traveled
-   uint8_t hit;               // block type the ray hit
-   int32_t offset;            // horizontal spot on texture the ray hit [0-63]
+   int32_t x;                 // x coordinate the ray hit
+   int32_t y;                 // y coordinate the ray hit
+  uint32_t dist;              // length of the ray, i.e. distance ray traveled
+   uint8_t hit;               // square_type the ray hit [0-127]
+   int32_t offset;            // horizontal spot on texture the ray hit [0-63] (used in memory pointers so int32_t)
    uint8_t face;              // face of the block it hit (00=East Wall, 01=North, 10=West, 11=South Wall)
 } RayStruct;
 static RayStruct ray;
@@ -180,22 +192,23 @@ static Window *window;
 static GRect window_frame;
 static Layer *graphics_layer;
 
-static bool up_button_depressed = false; // Whether Pebble's   Up   button is held
-static bool dn_button_depressed = false; // Whether Pebble's  Down  button is held
-static bool sl_button_depressed = false; // Whether Pebble's Select button is held
+  static bool up_button_depressed = false; // Whether Pebble's   Up   button is held
+  static bool dn_button_depressed = false; // Whether Pebble's  Down  button is held
+  static bool sl_button_depressed = false; // Whether Pebble's Select button is held
 //static bool bk_button_depressed = false; // Whether Pebble's  Back  button is held
 
-static uint8_t map[mapsize * mapsize];  // 0-255, 0-127 are squaretypes[], high bit set means ray hits
+// ------------------------------------------------------------------------ //
 
-int32_t  sqrt_int(int32_t a, int8_t root_depth) {int32_t b=a; for(int8_t i=0; i<root_depth; i++) b=(b+(a/b))/2; return b;} // Square Root
-int32_t   abs_int(int32_t a){return (a<0 ? 0 - a : a);} // Absolute Value
-
+// square root
 #define root_depth 10          // How many iterations square root function performs
-int32_t  sqrt32(int32_t a) {int32_t b=a; for(int8_t i=0; i<root_depth; i++) b=(b+(a/b))/2; return b;} // Square Root
+int32_t sqrt32(int32_t a) {int32_t b=a; for(int8_t i=0; i<root_depth; i++) b=(b+(a/b))/2; return b;} // Square Root
+int32_t sqrt_int(int32_t a, int8_t depth){int32_t b=a; for(int8_t i=0; i<depth; i++) b=(b+(a/b))/2; return b;} // Square Root
 
+// absolute value
 int32_t abs32(int32_t x) {return (x^(x>>31)) - (x>>31);}
 int16_t abs16(int16_t x) {return (x^(x>>15)) - (x>>15);}
 int8_t  abs8 (int8_t  x) {return (x^(x>> 7)) - (x>> 7);}
+int32_t abs_int(int32_t a){return (a<0 ? 0 - a : a);} // Absolute Value (might be faster than above)
 
 // sign function returns: -1 or 0 or 1 if input is <0 or =0 or >0
 int8_t  sign8 (int8_t  x){return (x > 0) - (x < 0);}
@@ -206,12 +219,12 @@ int32_t sign32(int32_t x){return (x > 0) - (x < 0);}
 //  Map Functions
 // ------------------------------------------------------------------------ //
 uint8_t getmap(int32_t x, int32_t y) {
-  x=x>>6; y=y>>6;
+  x>>=6; y>>=6;
   return (x<0 || x>=mapsize || y<0 || y>=mapsize) ? 0 : map[(y * mapsize) + x];
 }
 
 void setmap(int32_t x, int32_t y, uint8_t value) {
-  x=x>>6; y=y>>6;
+  x>>=6; y>>=6;
   if((x >= 0) && (x < mapsize) && (y >= 0) && (y < mapsize))
     map[y * mapsize + x] = value;
 }
@@ -265,14 +278,13 @@ void GenerateSquareMap() {
     map[i]                       = 128+0;  // north wall
     map[(mapsize-1)*mapsize + i] = 128+0;  // south wall
   }
-//   map[((mapsize-1) * mapsize)/2] = 128+1;  // middle block
   map[((mapsize/2) * mapsize) + (mapsize/2)] = 128+1;  // middle block
 
   
    player.x = 1 * 64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
    object.x = 2 * 64; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
-   player.x = 4 * 32 + 16; player.y = (64*mapsize)/2; player.facing=TRIG_MAX_ANGLE/2;    // start inside
-   object.x = 1 * 64; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
+   //player.x = 6 * 32 + 16; player.y = (64*mapsize)/2; player.facing=TRIG_MAX_ANGLE/2;    // start inside
+   //object.x = 3 * 32;      object.y = (64*mapsize)/2; object.facing=0;    // sprite position
 //  player.x = ((64*mapsize)/2)-64; player.y = (64*mapsize)/2; player.facing=0;    // start inside
 //  object.x = (64*mapsize)/2; object.y = (64*mapsize)/2; object.facing=0;    // sprite position
   //setmap(object.x, object.y, 0);
@@ -367,11 +379,11 @@ void walk(int32_t direction, int32_t distance) {
 static void main_loop(void *data) {
   AccelData accel=(AccelData){.x=0, .y=0, .z=0};          // all three are int16_t
   accel_service_peek(&accel);                             // read accelerometer
-  walk(player.facing, accel.y>>5);                        // walk based on accel.y  Technically: walk(accel.y * 64px / 1000);
+  walk(player.facing, accel.y>>5);                        // walk based on accel.y
   if(dn_button_depressed)                                 // if down button is held
     walk(player.facing + (1<<14), accel.x>>5);            //   strafe (1<<14 = TRIG_MAX_ANGLE / 4)
   else                                                    // else
-    player.facing = (player.facing + (accel.x<<3) + TRIG_MAX_ANGLE) % TRIG_MAX_ANGLE;                        //   spin
+    player.facing = (player.facing + (accel.x<<3));       //   spin
   layer_mark_dirty(graphics_layer);                       // tell pebble to draw when it's ready
 }
 
@@ -379,13 +391,14 @@ static void main_loop(void *data) {
 //  x, y = position on map to shoot the ray from
 //  angle = direction to shoot the ray (in Pebble angle notation)
 //modifies: global RayStruct ray
+//    uses: getmap(), abs32()
 void shoot_ray(int32_t start_x, int32_t start_y, int32_t angle) {
   int32_t sin, cos, dx, dy, nx, ny;
 
     sin = sin_lookup(angle);
     cos = cos_lookup(angle);
-  ray.x = start_x;// + (cos>>11);  // fixes fisheye, but puts you inside walls if you're too close. was ((32*cos)>>16), 32 being dist from player to edge of view plane
-  ray.y = start_y;// + (sin>>11);
+  ray.x = start_x;// + (cos>>11); // fixes fisheye, but puts you inside walls if you're too close. was ((32*cos)>>16), 32 being dist from player to edge of view plane
+  ray.y = start_y;// + (sin>>11); //
      ny = sin>0 ? 64 : -1;
      nx = cos>0 ? 64 : -1;
 
@@ -448,7 +461,7 @@ static void draw_textbox(GContext *ctx, GRect textframe, char *text) {
 static void draw_map(GContext *ctx, GRect box, int32_t zoom) {
   // note: Currently doesn't handle drawing beyond screen boundaries
   // zoom = pixel size of each square
-  uint32_t *ctx32 = ((uint32_t*)(((GBitmap*)ctx)->addr));
+  uint32_t *ctx32 = ((uint32_t*)(((GBitmap*)ctx)->addr));  // framebuffer pointer (screen memory)
   uint32_t xbit;
   int32_t x, y, yaddr, xaddr, xonmap, yonmap, yonmapinit;
   
@@ -496,7 +509,7 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
   uint32_t *target, *mask;
   int32_t dist[144];                 // Array of non-cos adjusted distance for each vertical wall segment -- for sprite rendering
   halfheight = box.size.h/2;
-  uint32_t *ctx32 = ((uint32_t*)(((GBitmap*)ctx)->addr));
+  uint32_t *ctx32 = ((uint32_t*)(((GBitmap*)ctx)->addr));  // framebuffer pointer (screen memory)
   
   // Draw Box around view (not needed if fullscreen)
   //TODO: Draw straight to framebuffer
@@ -506,20 +519,16 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
     graphics_context_set_fill_color(ctx, 0);  graphics_fill_rect(ctx, box, 0, GCornerNone); // Black background
     // Draw Sky from horizion on up, rotate based upon player angle
     //graphics_context_set_fill_color(ctx, 1); graphics_fill_rect(ctx, GRect(box.origin.x, box.origin.y, box.size.w, box.size.h/2), 0, GCornerNone); // White Sky  (Lightning?  Daytime?)
-  
-  
-  for(int16_t col = 0; col < box.size.w; col++) {  // Begin RayTracing Loop
-//     angle = (fov * (col - (box.size.w/2))) / box.size.w;
-    dx = (64*(col-(box.size.w/2)))/box.size.w;
-    dy = 64;
-    angle = atan2_lookup(dx, dy);
+
+  for(int16_t col = 0; col < box.size.w; col++) {        // Begin RayTracing Loop
+    angle = atan2_lookup((64*col/box.size.w) - 32, 64);    // dx = (64*(col-(box.size.w/2)))/box.size.w; dy = 64; angle = atan2_lookup(dx, dy);
     
     shoot_ray(player.x, player.y, player.facing + angle);  //Shoot rays out of player's eyes.  pew pew.
     ray.hit &= 127;                                        // Whether ray hit a block (>127) or not (<128), set ray.hit to valid block type [0-127]
     if(ray.dist > (uint32_t)farthest) farthest = ray.dist; // farthest (furthest?) wall (for sprite rendering. only render sprites closer than farthest wall)
     dist[col] = (uint32_t)ray.dist;                        // save distance of this column for sprite rendering later
     ray.dist *= cos_lookup(angle);                         // multiply by cos to stop fisheye lens (should be >>16 to get actual dist, but that's all done below)
-//  ray.dist <<= 16;    // use this if commenting out "ray.dist*=cos" above, cause it <<16's a lot below
+//  ray.dist <<= 16;    // use this if commenting out "ray.dist*=cos" above, cause it >>16's a lot below
     
       // Calculate amount of shade
       //z =  ray.dist >> 16; //z=(ray.dist*cos_lookup(angle))/TRIG_MAX_RATIO;  // z = distance
@@ -572,14 +581,10 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
   // type
   // d
 
-//Definitions:
-//  Object = enemy or item or whatever
-//  Sprite = object as displayed on screen
 
  
   uint8_t numobjects=1;
   int32_t spritecol, objectdist;  //, xoffset, yoffset;
-//   int32_t sin, cos;
 //if(false)  // enable/disable drawing of sprites
   for(uint8_t obj=0; obj<numobjects; obj++) {
     dx = object.x - player.x;
@@ -588,21 +593,23 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
     objectdist =  (((dx^(dx>>31)) - (dx>>31)) > ((dy^(dy>>31)) - (dy>>31))) ? (dx<<16) / cos_lookup(angle) : (dy<<16) / sin_lookup(angle);
 //     objectdist = (abs32(dx)>abs32(dy)) ? (dx<<16) / cos_lookup(angle) : (dy<<16) / sin_lookup(angle);
     angle = angle - player.facing;  // angle is now angle between center view column and object. <0=left of center, 0=center column, >0=right of center
+    
     if(cos_lookup(angle)>0) { // if object is in front of player.  note: if angle = 0 then object is straight right or left of the player
-      if(farthest>=objectdist) { // if ANY wall is further (or =) than object distance
-//         spritecol = (box.size.w/2) + (box.size.w * angle / fov);  // convert angle to view column (0 - box.width) (col = middle line of sprite) (was = w/2 + (w/2 * angle * fov/2))
+      if(farthest>=objectdist) { // if ANY wall is further (or =) than object distance, then display it
         spritecol = (box.size.w/2) + ((sin_lookup(angle)*box.size.w)>>16);  // column on screen of sprite center
 
         int32_t objectwidth = 32;           // 32 pixels wide  TODO: maybe other sized objects?  Besides scaling?
-        int32_t objectheight = 64;          // 32 pixels tall
-        int32_t objectverticaloffset = 0;//16; // normally center dot is vertically centered, + or - how far to move it.
-        int32_t spritescale = box.size.h;// * 20 / 10;
+        int32_t objectheight = 32;//16          // 32 pixels tall
+        int32_t objectverticaloffset = 64-objectheight;//+32;//16; // normally center dot is vertically centered, + or - how far to move it.
+//         int32_t spritescale = box.size.h ;// * 20 / 10;
+        
+        //objectdist = (objectdist * cos_lookup(angle)) >> 16;
+        
+        int32_t spritescale = (box.size.h);// * 20 / 10;
         int32_t spritewidth  = (spritescale * objectwidth) / objectdist;   // should be box.size.w, but wanna keep sprite h/w proportionate
-        int32_t spriteheight = (spritescale * objectheight) / objectdist;  // note: make sure to use not-cosine adjusted distance!
-//         int32_t spriteheight = ((spritescale * objectheight)<<16) / (objectdist*cos_lookup(angle));  // note: make sure to use not-cosine adjusted distance!
+        int32_t spriteheight = (spritescale * objectheight)/ objectdist;  // note: make sure to use not-cosine adjusted distance!
 //         int32_t halfspriteheight = spriteheight/2;
-        int32_t spriteverticaloffset = ((objectverticaloffset * spritescale) << 16) / (objectdist * cos_lookup(angle)); // fisheye adjustment
-//         int32_t spriteverticaloffset = ((objectverticaloffset * box.size.h) << 16) / (objectdist * cos_lookup(angle));
+        int32_t spriteverticaloffset = (objectverticaloffset * spritescale) / objectdist; // fisheye adjustment
 //         int32_t spriteverticaloffset = ((((objectverticaloffset * spritescale) + (32*box.size.h)) << 16) / (objectdist * cos_lookup(angle))); // floor it
         
         
@@ -612,6 +619,10 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
           int16_t xmin = sprite_xmin<0 ? 0: sprite_xmin;
           int16_t xmax = sprite_xmax>box.size.w ? box.size.w : sprite_xmax;
 
+
+// Half through floor
+//int32_t objectheight = 16;          // 32 pixels tall
+//int32_t objectverticaloffset = 64-objectheight;//+32;//16; // normally center dot is vertically centered, + or - how far to move it.
           
 // perfectly puts 32x32 sprite on ceiling
 //int32_t objectwidth = 32;
@@ -625,17 +636,7 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
 //int16_t sprite_ymin = sprite_ymax - spriteheight; // note: sprite is not cos adjusted but offset is (to keep it in place)
 
           
-//           int16_t sprite_ymin = (box.size.h/2) - (spriteheight/2) + spriteverticaloffset; // note: sprite is not cos adjusted but offset is (to keep it in place)
-//           int16_t sprite_ymax = (box.size.h/2) + (spriteheight/2) + spriteverticaloffset;
-//           int16_t sprite_ymin = halfheight + spriteverticaloffset - (spriteheight/2); // note: sprite is not cos adjusted but offset is (to keep it in place)
-//           int16_t sprite_ymax = halfheight + spriteverticaloffset + (spriteheight/2);
-
-//           int16_t sprite_ymax = halfheight + spriteverticaloffset + (spriteheight/2);
-//           int16_t sprite_ymin = sprite_ymax - spriteheight; // note: sprite is not cos adjusted but offset is (to keep it in place)
-
-//           int16_t sprite_ymax = halfheight + ((box.size.h << 21) / (objectdist * cos_lookup(angle)));
-          int16_t sprite_ymax = spriteverticaloffset + ((box.size.h + spriteheight)/2);// + (((32*box.size.h) << 16) / (objectdist * cos_lookup(angle)));
-//           int16_t sprite_ymax = halfheight + (32*box.size.h/objectdist);// + ((box.size.h << 21) / (objectdist * cos_lookup(angle)));
+          int16_t sprite_ymax = (box.size.h + spriteheight + spriteverticaloffset)/2;// + (((32*box.size.h) << 16) / (objectdist * cos_lookup(angle)));
           int16_t sprite_ymin = sprite_ymax - spriteheight; // note: sprite is not cos adjusted but offset is (to keep it in place)
           
 //           int16_t sprite_ymin = halfheight + spriteverticaloffset - spriteheight; // note: sprite is not cos adjusted but offset is (to keep it in place)
@@ -651,14 +652,14 @@ static void draw_3D(GContext *ctx, GRect box) { //, int32_t zoom) {
               if(dist[x]>=objectdist) {  // if not behind wall
                 xaddr = (box.origin.x + x) >> 5;
                 xbit  = (box.origin.x + x) & 31;
-                xoffset = (x - sprite_xmin) * objectdist / spritescale; // x point hit on texture -- make sure to use the original object dist, not the cosine adjusted one
+                xoffset = ((x - sprite_xmin) * objectdist) / spritescale; // x point hit on texture -- make sure to use the original object dist, not the cosine adjusted one
                 mask   = (uint32_t*)sprite_mask[0]->addr + xoffset;  // mask = mask
                 target = (uint32_t*)sprite_image[0]->addr + xoffset; // target = sprite
                 yaddr = (box.origin.y + ymin) * 5;
                 
                 for(int16_t y=ymin; y<ymax; y++, yaddr+=5) {
                   //graphics_draw_pixel(ctx, GPoint(box.origin.x + x, box.origin.y + y));
-                  yoffset = (y - sprite_ymin) * objectdist / spritescale; // y point hit on texture column (was = (objectheight*(y-sprite_ymin))/spriteheight)
+                  yoffset = ((y - sprite_ymin) * objectdist) / spritescale; // y point hit on texture column (was = (objectheight*(y-sprite_ymin))/spriteheight)
                   if(((*mask >> yoffset) & 1) == 1) {   // If mask point isn't clear, then draw point.  TODO: try removing == 1
                     ctx32[xaddr + yaddr] &= ~(1 << xbit);  // blacken bit
                   //ctx32[xaddr + yaddr] |= 1 << xbit;     // whiten bit
@@ -682,7 +683,6 @@ static void graphics_layer_update_proc(Layer *me, GContext *ctx) {
   time_ms(&sec1, &ms1);  //1st Time Snapshot
   
   //draw_3D(ctx,  GRect(view_x, view_y, view_w, view_h));
-  //draw_3D(ctx,  view);
   draw_3D(ctx,  GRect(1, 34, 142, 128));
   draw_3D(ctx,  GRect(4, 110, 40, 40));
 //   draw_map(ctx, GRect(4, 110, 40, 40), 4);
@@ -690,8 +690,9 @@ static void graphics_layer_update_proc(Layer *me, GContext *ctx) {
   time_ms(&sec2, &ms2);  //2nd Time Snapshot
   dt = (uint16_t)(1000*(sec2 - sec1)) + (ms2 - ms1);  //dt=delta time: time between two time snapshots in milliseconds
   
-  snprintf(text, sizeof(text), "(%ld,%ld) %ld %dms %dfps %d", player.x>>6, player.y>>6, player.facing, dt, 1000/dt, getmap(player.x,player.y));  // What text to draw
-  snprintf(text, sizeof(text), "(%ld,%ld) %ld\n%ld %ld %ld %ld %ld", player.x, player.y, player.facing, Q1,Q2,Q3,Q4,Q5);  // What text to draw
+//   snprintf(text, sizeof(text), "(%ld,%ld) %ld %dms %dfps %d", player.x>>6, player.y>>6, player.facing, dt, 1000/dt, getmap(player.x,player.y));  // What text to draw
+  snprintf(text, sizeof(text), "%db (%ld,%ld) %d\n%ld %ld %ld %ld %ld", heap_bytes_free(), player.x, player.y, player.facing, Q1,Q2,Q3,Q4,Q5);  // What text to draw
+  
   draw_textbox(ctx, GRect(0, 0, 143, 32), text);
    
   //  Set a timer to restart loop in 50ms
@@ -761,9 +762,8 @@ static void init(void) {
   //GenerateMazeMap(mapsize/2, 0);    // generate a random maze, enterane on middle of top side
   GenerateSquareMap();
   
-  view = GRect(1, 25, 142, 128); // size and placement of 3D window
-  // MainLoop() automatically called with dirty layer drawing
   LoadMapTextures(); // Load textures
+  // MainLoop() will be automatically started with dirty layer drawing
 }
 
 static void deinit(void) {
