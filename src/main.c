@@ -684,8 +684,8 @@ static void graphics_layer_update_proc(Layer *me, GContext *ctx) {
   
   //draw_3D(ctx,  GRect(view_x, view_y, view_w, view_h));
   draw_3D(ctx,  GRect(1, 34, 142, 128));
-  draw_3D(ctx,  GRect(4, 110, 40, 40));
-//   draw_map(ctx, GRect(4, 110, 40, 40), 4);
+//  draw_3D(ctx,  GRect(4, 110, 40, 40));
+   draw_map(ctx, GRect(4, 110, 40, 40), 4);
   
   time_ms(&sec2, &ms2);  //2nd Time Snapshot
   dt = (uint16_t)(1000*(sec2 - sec1)) + (ms2 - ms1);  //dt=delta time: time between two time snapshots in milliseconds
