@@ -263,9 +263,12 @@ void UnLoadMapTextures() {
 void GenerateSquareMap() {
   squaretype[0].ceiling = 255; // outside sky
   squaretype[0].floor   = 6;   // outside grass
-  squaretype[0].face[0]=squaretype[0].face[1]=squaretype[0].face[2]=squaretype[0].face[3]=5;
+  squaretype[0].face[0]=squaretype[0].face[1]=squaretype[0].face[2]=squaretype[0].face[3]=0;
 
-  squaretype[1].face[0]=squaretype[1].face[1]=squaretype[1].face[2]=squaretype[1].face[3]=5;
+  squaretype[1].face[0] = 1;
+  squaretype[1].face[1] = 2;
+  squaretype[1].face[2] = 5;
+  squaretype[1].face[3] = 6;
   squaretype[1].ceiling = 4;
   squaretype[1].floor   = 3;
   
@@ -319,9 +322,11 @@ void GenerateMazeMap(int32_t startx, int32_t starty) {
 
   squaretype[1].ceiling = 4;
   squaretype[1].floor = 3;
+  squaretype[1].face[0]=squaretype[1].face[1]=squaretype[1].face[2]=squaretype[1].face[3] = 5;
   
   squaretype[2].ceiling = 2;
   squaretype[2].floor = 4;
+  squaretype[2].face[0]=squaretype[2].face[1]=squaretype[2].face[2]=squaretype[2].face[3] = 5;
 
   int32_t x, y;
   int8_t try;
@@ -335,7 +340,7 @@ void GenerateMazeMap(int32_t startx, int32_t starty) {
     if((map[current] & 15) == 15) {  // If all directions have been tried, then go to previous cell unless you're back at the start
       if(cursory==starty && cursorx==startx) {  // If back at the start, then we're done.
         map[current]=1;
-        for (int16_t i=0; i<mapsize*mapsize; i++) if(map[i]==0) map[i] = 128+1; // invert map bits (1=empty, 128+1=wall, 2=special)
+        for (int16_t i=0; i<mapsize*mapsize; i++) if(map[i]==0) map[i] = 128+1; // convert map bits (1=empty, 128+1=wall, 2=special)
         return;
       }
       switch(map[current] >> 4) { // Else go back to the previous cell:  NOTE: If the 1st two bits are used, need to "&3" mask this
@@ -452,7 +457,7 @@ static void draw_textbox(GContext *ctx, GRect textframe, char *text) {
     graphics_context_set_fill_color(ctx, 0);   graphics_fill_rect(ctx, textframe, 0, GCornerNone);  //Black Solid Rectangle
     graphics_context_set_stroke_color(ctx, 1); graphics_draw_rect(ctx, textframe);                //White Rectangle Border  
     graphics_context_set_text_color(ctx, 1);  // White Text
-    graphics_draw_text(ctx, text, fonts_get_system_font(FONT_KEY_GOTHIC_14), textframe, GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);  //Write Text
+    graphics_draw_text(ctx, text, fonts_get_system_font(FONT_KEY_GOTHIC_14), textframe, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);  //Write Text
 }
 
 
@@ -684,22 +689,22 @@ static void graphics_layer_update_proc(Layer *me, GContext *ctx) {
   
   //draw_3D(ctx,  GRect(view_x, view_y, view_w, view_h));
   draw_3D(ctx,  GRect(1, 34, 142, 128));
-//  draw_3D(ctx,  GRect(4, 110, 40, 40));
-   draw_map(ctx, GRect(4, 110, 40, 40), 4);
+  //draw_3D(ctx,  GRect(4, 110, 40, 40));
+  draw_map(ctx, GRect(4, 110, 40, 40), 4);
   
   time_ms(&sec2, &ms2);  //2nd Time Snapshot
   dt = (uint16_t)(1000*(sec2 - sec1)) + (ms2 - ms1);  //dt=delta time: time between two time snapshots in milliseconds
-  
-//   snprintf(text, sizeof(text), "(%ld,%ld) %ld %dms %dfps %d", player.x>>6, player.y>>6, player.facing, dt, 1000/dt, getmap(player.x,player.y));  // What text to draw
-  snprintf(text, sizeof(text), "%db (%ld,%ld) %d\n%ld %ld %ld %ld %ld", heap_bytes_free(), player.x, player.y, player.facing, Q1,Q2,Q3,Q4,Q5);  // What text to draw
-  
+
+  snprintf(text, sizeof(text), "(%ld,%ld) %d\n%dms %dfps", player.x, player.y, player.facing, dt, 1000/dt);  // What text to draw
+//  snprintf(text, sizeof(text), "(%ld,%ld) %d\n%dms %dfps", player.x>>6, player.y>>6, player.facing, dt, 1000/dt);  // What text to draw
+//  snprintf(text, sizeof(text), "%db (%ld,%ld) %d\n%ld %ld %ld %ld %ld", heap_bytes_free(), player.x, player.y, player.facing, Q1,Q2,Q3,Q4,Q5);  // What text to draw
   draw_textbox(ctx, GRect(0, 0, 143, 32), text);
    
   //  Set a timer to restart loop in 50ms
-  if(dt<40 && dt>0) // if time to render is less than 40ms, force framerate of 20FPS or worse
-     app_timer_register(50-dt, main_loop, NULL); // 10FPS
+  if(dt<40 && dt>0) // if time to render is less than 40ms, force max framerate of 20FPS or worse
+     app_timer_register(50-dt, main_loop, NULL);  // 20FPS
   else
-     app_timer_register(10, main_loop, NULL);     // took longer than 40ms, loop  in 10ms (asap)
+     app_timer_register(10, main_loop, NULL);     // took longer than 40ms, loop asap (in 10ms)
 }
 
 // ------------------------------------------------------------------------ //

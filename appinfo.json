@@ -61,6 +61,7 @@
             }
         ]
     },
+    "sdkVersion": "2",
     "shortName": "3DFPS v0.9",
     "uuid": "529a7262-efdb-48d4-80d4-da14963099b9",
     "versionCode": 1,
